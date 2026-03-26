@@ -6,11 +6,14 @@ from cprompts.weatherPrompt import WEATHER_BUTLER_PROMPT
 from cprompts.socialEventPrompt import SOCIAL_EVENT_PROMPT
 from cprompts.travelPlanPrompt import TRAVEL_PLAN_PROMPT
 import os
+import logging
 
+log=logging.getLogger("chatAsYou260325")
 llm = load_local_model()
 llm_with_tools = llm.bind_tools(tools)
 
 def response_node(state: PersonState):
+    log.debug(f"state={state}")
     intent = state.get("intent", "general")
     # Get the directory where THIS script is located
     current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -46,5 +49,6 @@ def response_node(state: PersonState):
     """
 
     messages = [SystemMessage(content=system_prompt)] + state["messages"]
+    log.debug(f"messages={messages}")
     response = llm_with_tools.invoke(messages)
     return {"messages": [response]}

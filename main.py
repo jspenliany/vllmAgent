@@ -11,7 +11,7 @@ from cnodes.Intent import intent_node
 from logger.log_def import setup_singleton_logger
 import uuid
 #start logging system
-setup_singleton_logger()
+log=setup_singleton_logger()
 
 def run_digital_person(name):
     workflow = StateGraph(PersonState)
@@ -37,7 +37,7 @@ def run_digital_person(name):
     # Define the config with an explicit type
     config: RunnableConfig = {"configurable": {"thread_id": session_id}}
 
-    print(f"--- 气象管家已上线 (Thread: {session_id}) ---")
+    log.debug(f"--- 气象管家已上线 (Thread: {session_id}) ---")
 
     while True:
         user_input = input("\nUser: ")
@@ -48,15 +48,16 @@ def run_digital_person(name):
         inputs = cast(PersonState, cast(Any, {"messages": [HumanMessage(content=user_input)]}))
 
         for event in app.stream(inputs, config=config, stream_mode="values"):
-            # print("-----------***********--------------")
+            # log.debug("-----------***********--------------")
             if "messages" in event:
                 # The last message in the list is the most recent (Human or AI)
                 last_msg = event["messages"][-1]
 
                 # Only print if it's from the Digital Person (AIMessage)
                 if isinstance(last_msg, AIMessage):
+                    log.debug(f"Digital Person: {last_msg.content}")
                     print(f"Digital Person: {last_msg.content}")
-                    print("---------------------------------")
+                    log.debug("---------------------------------")
 
 
 
