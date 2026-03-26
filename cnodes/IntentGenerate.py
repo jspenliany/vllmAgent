@@ -51,4 +51,11 @@ def response_node(state: PersonState):
     messages = [SystemMessage(content=system_prompt)] + state["messages"]
     log.debug(f"messages={messages}")
     response = llm_with_tools.invoke(messages)
+
+    usage = getattr(response, 'usage_metadata', {})
+    prompt_t = usage.get('input_tokens', 0)
+    gen_t = usage.get('output_tokens', 0)
+
+    log.debug(f"TOKEN_USAGE | Intent: {state['intent']} | Prompt: {prompt_t} | Gen: {gen_t} | Total: {prompt_t + gen_t}")
+
     return {"messages": [response]}

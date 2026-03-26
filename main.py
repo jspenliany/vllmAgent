@@ -8,6 +8,7 @@ from cnodes.ExtractDetail import extract_memory_node
 from cnodes.RetrieveDetail import retrieve_memory_node
 from cnodes.IntentGenerate import response_node
 from cnodes.Intent import intent_node
+from cnodes.Emotion import emotion_node
 from logger.log_def import setup_singleton_logger
 import uuid
 #start logging system
@@ -20,13 +21,15 @@ def run_digital_person(name):
     workflow.add_node("listener", extract_memory_node)
     workflow.add_node("reflector", retrieve_memory_node)
     workflow.add_node("intent_classifier", intent_node)
+    workflow.add_node("emotion_tracker", emotion_node)
     workflow.add_node("speaker", response_node)
 
     # Connect them
     workflow.add_edge(START, "listener")
     workflow.add_edge("listener", "reflector")
-    workflow.add_edge("reflector", "intent_classifier")  # <--- Route to Intent
-    workflow.add_edge("intent_classifier", "speaker")  # <--- Then to Speaker
+    workflow.add_edge("reflector", "intent_classifier")  # Route to Intent
+    workflow.add_edge("intent_classifier", "emotion_tracker")  # Route to Emotion
+    workflow.add_edge("emotion_tracker", "speaker")  # Then to Speaker
     workflow.add_edge("speaker", END)
     # Compile with memory
     memory = MemorySaver()
@@ -37,7 +40,7 @@ def run_digital_person(name):
     # Define the config with an explicit type
     config: RunnableConfig = {"configurable": {"thread_id": session_id}}
 
-    log.debug(f"--- 气象管家已上线 (Thread: {session_id}) ---")
+    log.debug(f"--- 虚拟形象已上线 (Thread: {session_id}) ---")
 
     while True:
         user_input = input("\nUser: ")
