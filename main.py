@@ -29,7 +29,7 @@ def run_digital_person(name):
     workflow.add_edge("intent_classifier", "speaker")  # <--- Then to Speaker
     workflow.add_edge("speaker", END)
     # Compile with memory
-    memory = MemorySaver()  # <--- Initialize memory
+    memory = MemorySaver()
     app = workflow.compile(checkpointer=memory)
 
     # Use a fixed ID or move uuid inside the loop if you want fresh starts

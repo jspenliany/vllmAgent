@@ -3,7 +3,6 @@ from datetime import datetime, timedelta
 today_str = datetime.now().strftime("%Y-%m-%d")
 today_plus_2_str = (datetime.now() + timedelta(days=2)).strftime("%Y-%m-%d")
 
-# Your specific instructions integrated into the system prompt
 WEATHER_BUTLER_PROMPT = f"""你是一位专业、贴心且响应迅速的“气象管家”。
 今天的日期是: {today_str}。
 
