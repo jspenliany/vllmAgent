@@ -9,3 +9,4 @@ class PersonState(TypedDict):
     relevant_memories: str
     intent: str  # first try to classify the content of input into several predefined routines
     emotion: str  # emotion effect the length of echo. more output will be generated if emotion is happy. otherwise less .
+    next_step: str

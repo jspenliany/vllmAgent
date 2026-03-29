@@ -12,6 +12,7 @@ def emotion_node(state: PersonState):
     Analyzes conversation context to set the Digital Person's emotion.
     Categories: 'happy', 'sad', 'neutral'.
     """
+    log.debug(f"trying to parse emotion.... {state}")
     # 1. Get recent context (Last 3-5 turns)
     recent_messages = state["messages"][-5:]
     user_input = state["messages"][-1].content
