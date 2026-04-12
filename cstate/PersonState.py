@@ -1,4 +1,4 @@
-from typing import Annotated, List, TypedDict
+from typing import Annotated, List, TypedDict, Any
 from langgraph.graph.message import add_messages
 from langchain_core.messages import BaseMessage
 
@@ -10,3 +10,4 @@ class PersonState(TypedDict):
     intent: str  # first try to classify the content of input into several predefined routines
     emotion: str  # emotion effect the length of echo. more output will be generated if emotion is happy. otherwise less .
     next_step: str
+    tools: List[Any]

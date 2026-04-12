@@ -25,23 +25,26 @@ def route_after_intent(state: PersonState):
     :return:
     """
     log.debug("--- Routing after Intent ---")
-
-    last_msg = state["messages"][-1]
-
-    # 1. Check if the LLM generated a tool call (The ReAct "Plan")
-    # We use isinstance to avoid the AttributeError on HumanMessages
-    if isinstance(last_msg, AIMessage) and last_msg.tool_calls:
-        log.debug("Plan: Execute Tool")
+    # 1. Check for tool calls first (highest priority)
+    messages = state.get("messages", [])
+    if messages and isinstance(messages[-1], AIMessage) and messages[-1].tool_calls:
+        log.debug("--- Routing: Entering Tool Loop ---")
         return "tools"
 
-    # 2. Re-evaluating the "Soul" path
-    # If the user input was general, we might need more "thought" (reflector)
-    if state.get("intent") == "general":
-        log.debug("Plan: Reflecting more")
-        return "reflector"
+    # 2. Check for the "Insufficient Info" exit rule
+    intent = state.get("intent")
+    if intent == "insufficient_info":
+        log.debug("--- Routing: Exiting due to missing info ---")
+        return "speaker"
 
-    # 3. Default: Move to feeling (emotion) and responding
-    log.debug("Plan: Proceed to Emotion")
+    # 3. Handle 'general' or specific soulful intents
+    # Ensure you DON'T route back to 'reflector' if you've already reflected!
+    if intent == "general":
+        # If we've already done retrieval, go to emotion or speaker
+        log.debug("--- Routing: General intent -> Emotion Tracker ---")
+        return "emotion_tracker"
+
+    log.debug(f"--- Routing: Soul intent [{intent}] -> Emotion Tracker ---")
     return "emotion_tracker"
 
 
@@ -51,7 +54,7 @@ def run_digital_person(name):
 
     # Define the flow
     workflow.add_node("listener", extract_memory_node)
-    workflow.add_node("tool_node", tool_node)
+    workflow.add_node("tools", tool_node)
     workflow.add_node("reflector", retrieve_memory_node)
     workflow.add_node("intent_classifier", intent_node)
     workflow.add_node("emotion_tracker", emotion_node)
@@ -68,9 +71,10 @@ def run_digital_person(name):
         {
             "reflector":"reflector",
             "emotion_tracker":"emotion_tracker",
+            "tools": "tools",
         }
     )
-    workflow.add_edge("tool_node", "intent_classifier")
+    workflow.add_edge("tools", "intent_classifier")
     # Route to Emotion
     workflow.add_edge("emotion_tracker", "speaker")  # Then to Speaker
     workflow.add_edge("speaker", END)
