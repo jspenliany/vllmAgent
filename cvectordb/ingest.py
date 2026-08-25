@@ -3,6 +3,10 @@
 Batch ingestion pipeline for 400 scattered .txt documents.
 Loads → semantic chunks → embeds (dense+sparse) → upserts to Milvus.
 Run periodically (cron/systemd timer) for incremental updates.
+
+New: Logic Template Extraction for cross-domain analogy transfer.
+Each document gets a "logic_template" JSON extracted by LLM,
+enabling cross-domain reasoning (e.g., neighbor dispute logic → traffic dispute).
 """
 
 import os
@@ -23,6 +27,9 @@ from langchain_community.document_loaders import TextLoader
 from langchain_experimental.text_splitter import SemanticChunker
 from langchain_core.documents import Document as LCDocument
 from langchain_core.embeddings import Embeddings
+from langchain_openai import ChatOpenAI
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.output_parsers import JsonOutputParser
 
 # ============== CONFIG ==============
 MILVUS_HOST = "localhost"
@@ -32,15 +39,56 @@ DIM = 1024
 # bge-m3 embedding service (used for BOTH semantic chunking + vector embeddings)
 EMBED_URL = "http://192.168.198.1:8070/v1/embeddings"
 EMBED_MODEL = "bge-m3"
+# Gemma LLM (OpenAI-compatible API) for logic extraction
+LLM_URL = "http://192.168.198.1:8000/v1"
+LLM_MODEL = "gemma-4-31b-qat-it"
+LLM_API_KEY = "none"
 BATCH_EMBED_SIZE = 32
 BATCH_INSERT_SIZE = 128
-DOCS_DIR = Path("../resources/txt_corpus")  # <-- change to your 400 .txt files
+DOCS_DIR = Path("/data/txt_corpus")  # <-- change to your 400 .txt files
 MANIFEST_PATH = Path("./ingest_manifest.json")
 LOG_LEVEL = logging.INFO
 # ====================================
 
 logging.basicConfig(level=LOG_LEVEL, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
+
+
+# ============== LOGIC EXTRACTION PROMPT ==============
+LOGIC_EXTRACT_PROMPT = ChatPromptTemplate.from_template("""
+你是一个法律/社会治理推理专家。请从文档中提取「可跨域复用的核心解决逻辑」。
+
+输出 JSON（仅输出 JSON，不要额外文字）：
+{
+  "logic_template": {
+    "name": "简短名称，如：多方利益平衡调解框架",
+    "steps": [
+      {"step": 1, "action": "事实认定", "key_question": "核心冲突点是什么？", "method": "现场勘验/取证/听取双方陈述"},
+      {"step": 2, "action": "责任归属", "key_question": "谁主责/次责/无责？", "method": "依据法条/行业标准/过错程度划分"},
+      {"step": 3, "action": "损失量化", "key_question": "损失范围与金额？", "method": "评估机构/市场价/鉴定报告"},
+      {"step": 4, "action": "方案协商", "key_question": "如何分配责任/赔偿？", "method": "调解员主持/法律援助/分期/实物折价"},
+      {"step": 5, "action": "协议落地", "key_question": "如何保证履行？", "method": "司法确认/公证/分期监管"}
+    ],
+    "guardrails": [
+      "必须依据法律法规，不能违背公序良俗",
+      "当事人自愿原则，不得强制调解",
+      "涉及刑事责任的移交公安"
+    ],
+    "applicability": {
+      "core_domain": "邻里纠纷",
+      "transferable_domains": ["道路交通纠纷", "消费纠纷", "租赁纠纷", "劳务纠纷"],
+      "transfer_conditions": "均为民事赔偿/责任划分类非刑事纠纷，双方有继续交往意愿"
+    }
+  },
+  "source_case_summary": "原文档 200 字摘要"
+}
+
+文档内容：
+{doc_text}
+""")
+
+# LLM for logic extraction (initialized in main)
+logic_extraction_chain = None
 
 
 @dataclass
@@ -51,6 +99,8 @@ class FileManifest:
     mtime: float
     chunk_count: int = 0
     section_count: int = 0
+    logic_extracted: bool = False
+    logic_template: Optional[Dict[str, Any]] = None
 
 
 class BGE_M3_Embeddings(Embeddings):
@@ -148,6 +198,24 @@ class ManifestStore:
 
     def all_keys(self) -> set:
         return set(self.data.keys())
+
+
+def all_keys(self) -> set:
+        return set(self.data.keys())
+
+
+def extract_logic_template(text: str, llm_chain) -> Optional[Dict[str, Any]]:
+    """Extract logic template from document text using LLM."""
+    try:
+        # Use first 4000 chars for logic extraction (cost control)
+        truncated = text[:4000]
+        result = llm_chain.invoke({"doc_text": truncated})
+        # Parse JSON from response
+        logic_data = json.loads(result)
+        return logic_data
+    except Exception as e:
+        log.warning(f"Logic extraction failed: {e}")
+        return None
 
 
 def file_hash(path: Path) -> str:
@@ -253,9 +321,10 @@ def process_file(
     file_path: Path,
     embedder: BGE_M3_Embedder,
     embeddings: BGE_M3_Embeddings,
-    manifest: ManifestStore
+    manifest: ManifestStore,
+    logic_chain
 ) -> Optional[FileManifest]:
-    """Process a single .txt file: load → section → semantic chunk → embed."""
+    """Process a single .txt file: load → section → semantic chunk → embed → logic extraction."""
     rel_path = str(file_path.relative_to(DOCS_DIR))
     stat = file_path.stat()
     fhash = file_hash(file_path)
@@ -274,6 +343,11 @@ def process_file(
     # Section split
     sections = split_sections(text)
 
+    # Extract logic template from full document (once per file)
+    logic_template = extract_logic_template(text, logic_chain)
+    if logic_template:
+        log.info(f"  → Logic template extracted: {logic_template.get('logic_template', {}).get('name', 'unnamed')}")
+
     all_chunks = []
     for sec_idx, sec in enumerate(sections):
         # Semantic chunk within section (use embeddings for boundary detection)
@@ -282,15 +356,20 @@ def process_file(
             # Global char offsets in original document
             global_start = sec["start_char"] + chunk["start_char"]
             global_end = sec["start_char"] + chunk["end_char"]
-            all_chunks.append({
+            chunk_data = {
                 "text": chunk["text"],
                 "source_id": rel_path,
                 "section_title": sec["title"],
                 "section_start": global_start,
                 "section_end": global_end,
                 "chunk_id": chunk_idx,
-                "section_idx": sec_idx
-            })
+                "section_idx": sec_idx,
+                # Logic template fields (same for all chunks from this file)
+                "logic_template": logic_template,
+                "logic_name": logic_template.get("logic_template", {}).get("name") if logic_template else None,
+                "transferable_domains": logic_template.get("logic_template", {}).get("applicability", {}).get("transferable_domains", []) if logic_template else [],
+            }
+            all_chunks.append(chunk_data)
 
     if not all_chunks:
         log.warning(f"No chunks produced for {rel_path}")
@@ -315,7 +394,9 @@ def process_file(
         size=stat.st_size,
         mtime=stat.st_mtime,
         chunk_count=len(all_chunks),
-        section_count=len(sections)
+        section_count=len(sections),
+        logic_extracted=logic_template is not None,
+        logic_template=logic_template
     )
     manifest.upsert(new_manifest)
     log.info(f"  → {len(all_chunks)} chunks, {len(sections)} sections")
@@ -348,6 +429,9 @@ def upsert_chunks(chunks: List[Dict[str, Any]]):
             "chunk_id": c["chunk_id"],
             "dense_vector": c["dense_vector"],
             "sparse_vector": c["sparse_vector"],
+            "logic_template": c.get("logic_template"),
+            "logic_name": c.get("logic_name"),
+            "transferable_domains": c.get("transferable_domains", []),
         })
 
     # Batch insert
@@ -376,6 +460,10 @@ def ensure_collection():
     schema.add_field("chunk_id", DataType.INT64)
     schema.add_field("dense_vector", DataType.FLOAT_VECTOR, dim=DIM)
     schema.add_field("sparse_vector", DataType.SPARSE_FLOAT_VECTOR)
+    # Logic template fields for cross-domain analogy
+    schema.add_field("logic_template", DataType.JSON)
+    schema.add_field("logic_name", DataType.VARCHAR, max_length=256)
+    schema.add_field("transferable_domains", DataType.JSON)
 
     index_params = MilvusClient.prepare_index_params()
     index_params.add_index(
@@ -390,6 +478,11 @@ def ensure_collection():
         metric_type="IP",
         params={"drop_ratio_build": 0.2}
     )
+    # Inverted index for transferable_domains filtering
+    index_params.add_index(
+        field_name="transferable_domains",
+        index_type="INVERTED"
+    )
 
     client.create_collection(
         collection_name=COLLECTION_NAME,
@@ -397,7 +490,7 @@ def ensure_collection():
         index_params=index_params
     )
     client.close()
-    log.info(f"Created collection '{COLLECTION_NAME}' with hybrid indexes")
+    log.info(f"Created collection '{COLLECTION_NAME}' with hybrid indexes + logic template fields")
 
 
 def main():
@@ -406,6 +499,18 @@ def main():
     # 1. Ensure collection exists
     ensure_collection()
 
+    # 2. Initialize LLM for logic extraction
+    global logic_extraction_chain
+    llm = ChatOpenAI(
+        base_url=LLM_URL,
+        model=LLM_MODEL,
+        api_key=LLM_API_KEY,
+        temperature=0.1,
+        timeout=60,
+    )
+    logic_extraction_chain = LOGIC_EXTRACT_PROMPT | llm | JsonOutputParser()
+    log.info("Logic extraction chain initialized")
+
     # 2. Load manifest
     manifest = ManifestStore(MANIFEST_PATH)
 
@@ -413,7 +518,7 @@ def main():
     files = discover_files(DOCS_DIR)
     log.info(f"Discovered {len(files)} .txt files")
 
-    # 4. Diff: find deleted files
+    # 3. Diff: find deleted files
     current_files = {str(f.relative_to(DOCS_DIR)) for f in files}
     deleted = manifest.all_keys() - current_files
     if deleted:
@@ -424,18 +529,18 @@ def main():
             manifest.delete(sid)
         client.close()
 
-    # 5. Process each file (parallelize embedding-heavy step)
+    # 4. Process each file (parallelize embedding-heavy step)
     embedder = BGE_M3_Embedder()
     embeddings = BGE_M3_Embeddings()
     processed = 0
     for f in files:
         try:
-            process_file(f, embedder, embeddings, manifest)
+            process_file(f, embedder, embeddings, manifest, logic_extraction_chain)
             processed += 1
         except Exception as e:
             log.error(f"Failed {f}: {e}")
 
-    # 6. Save manifest
+    # 5. Save manifest
     manifest.save()
     log.info(f"Done. Processed {processed}/{len(files)} files. Manifest saved.")
 
