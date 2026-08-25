@@ -45,7 +45,7 @@ LLM_MODEL = "gemma-4-31b-qat-it"
 LLM_API_KEY = "none"
 BATCH_EMBED_SIZE = 32
 BATCH_INSERT_SIZE = 128
-DOCS_DIR = Path("/data/txt_corpus")  # <-- change to your 400 .txt files
+DOCS_DIR = Path("../resources/txt_corpus")  # <-- change to your 400 .txt files
 MANIFEST_PATH = Path("./ingest_manifest.json")
 LOG_LEVEL = logging.INFO
 # ====================================
@@ -56,34 +56,44 @@ log = logging.getLogger(__name__)
 
 # ============== LOGIC EXTRACTION PROMPT ==============
 LOGIC_EXTRACT_PROMPT = ChatPromptTemplate.from_template("""
-你是一个法律/社会治理推理专家。请从文档中提取「可跨域复用的核心解决逻辑」。
+You are an expert analyst skilled at extracting **reusable problem-solving frameworks** from documents across any domain (technical, business, scientific, educational, legal, medical, engineering, policy, etc.).
 
-输出 JSON（仅输出 JSON，不要额外文字）：
-{
-  "logic_template": {
-    "name": "简短名称，如：多方利益平衡调解框架",
+Extract a **logic template** - a structured, reusable problem-solving framework that can be applied to similar problems in other domains.
+
+Output ONLY JSON (no extra text):
+{{
+  "logic_template": {{
+    "name": "Concise framework name (e.g., 'Root Cause Analysis & Corrective Action Framework', 'Stakeholder Alignment & Decision Framework', 'Iterative Experimentation & Validation Framework')",
+    "description": "One-sentence summary of what this framework solves",
     "steps": [
-      {"step": 1, "action": "事实认定", "key_question": "核心冲突点是什么？", "method": "现场勘验/取证/听取双方陈述"},
-      {"step": 2, "action": "责任归属", "key_question": "谁主责/次责/无责？", "method": "依据法条/行业标准/过错程度划分"},
-      {"step": 3, "action": "损失量化", "key_question": "损失范围与金额？", "method": "评估机构/市场价/鉴定报告"},
-      {"step": 4, "action": "方案协商", "key_question": "如何分配责任/赔偿？", "method": "调解员主持/法律援助/分期/实物折价"},
-      {"step": 5, "action": "协议落地", "key_question": "如何保证履行？", "method": "司法确认/公证/分期监管"}
+      {{
+        "step": 1,
+        "phase": "Short phase name (e.g., 'Problem Definition', 'Data Collection', 'Hypothesis Formation')",
+        "key_question": "The core question this phase answers",
+        "method": "Specific techniques, tools, or approaches used",
+        "outputs": "Key deliverables or decisions produced",
+        "success_criteria": "How to know this phase is complete"
+      }}
+      // ... 4-7 steps total
     ],
     "guardrails": [
-      "必须依据法律法规，不能违背公序良俗",
-      "当事人自愿原则，不得强制调解",
-      "涉及刑事责任的移交公安"
+      "Constraints, boundaries, or principles that must be respected",
+      "Common failure modes to avoid",
+      "Ethical/legal/safety boundaries"
     ],
     "applicability": {
-      "core_domain": "邻里纠纷",
-      "transferable_domains": ["道路交通纠纷", "消费纠纷", "租赁纠纷", "劳务纠纷"],
-      "transfer_conditions": "均为民事赔偿/责任划分类非刑事纠纷，双方有继续交往意愿"
-    }
-  },
-  "source_case_summary": "原文档 200 字摘要"
-}
+      "core_domain": "Primary domain of the source document (e.g., 'software debugging', 'public health policy', 'manufacturing quality')",
+      "transferable_domains": ["domain1", "domain2", "domain3"],
+      "transfer_conditions": "Under what conditions this framework transfers (e.g., 'problems with multiple stakeholders and measurable outcomes', 'systems with feedback loops and observable metrics')"
+    },
+    "key_assumptions": [
+      "Assumptions the framework relies on (e.g., 'stakeholders are rational actors', 'data is available', 'system is observable')"
+    ]
+  }},
+  "source_case_summary": "200-word summary of the source document's problem, approach, and outcome"
+}}
 
-文档内容：
+Document content:
 {doc_text}
 """)
 
@@ -209,7 +219,7 @@ def extract_logic_template(text: str, llm_chain) -> Optional[Dict[str, Any]]:
     try:
         # Use first 4000 chars for logic extraction (cost control)
         truncated = text[:4000]
-        result = llm_chain.invoke({"doc_text": truncated})
+        result = llm_chain.invoke(LOGIC_EXTRACT_PROMPT.format(doc_text=truncated))
         # Parse JSON from response
         logic_data = json.loads(result)
         return logic_data
@@ -289,33 +299,75 @@ def split_sections(text: str) -> List[Dict[str, Any]]:
     }]
 
 
+# ingest.py - update semantic_chunk_section function
+
 def semantic_chunk_section(section_text: str, embeddings: BGE_M3_Embeddings) -> List[Dict[str, Any]]:
     """
-    Use LangChain SemanticChunker with bge-m3 embeddings.
-    Returns list of chunks within the section.
+    Hybrid: Semantic boundaries + hard size limits.
     """
-    # Use bge-m3 embeddings for chunking decisions (same model as vector storage)
+    # 1. First: Semantic chunking (find semantic boundaries)
     chunker = SemanticChunker(
         embeddings,
         breakpoint_threshold_type="percentile",
-        breakpoint_threshold_amount=70,  # 70th percentile similarity = boundary
-        min_chunk_size=100,
+        breakpoint_threshold_amount=85,  # 85th percentile = more aggressive splitting (was 70)
+        min_chunk_size=200,  # Minimum meaningful chunk
     )
     lc_docs = chunker.create_documents([section_text])
-    chunks = []
-    for doc in lc_docs:
-        # Find char offsets in section_text (approximate)
-        start = section_text.find(doc.page_content[:50])
-        if start == -1:
-            start = 0
-        end = start + len(doc.page_content)
-        chunks.append({
-            "text": doc.page_content,
-            "start_char": start,
-            "end_char": end
-        })
-    return chunks
 
+    # 2. Hard limit: Split oversized chunks by tokens (~500 tokens max)
+    MAX_TOKENS = 500  # ~350-400 Chinese chars, safe for embedding + LLM context
+
+    def estimate_tokens(text: str) -> int:
+        # Rough: Chinese ~1.5 chars/token, English ~4 chars/token
+        chinese_chars = len([c for c in text if '\u4e00' <= c <= '\u9fff'])
+        other_chars = len(text) - chinese_chars
+        return int(chinese_chars / 1.5 + other_chars / 4)
+
+    def split_by_tokens(text: str, max_tokens: int) -> List[str]:
+        """Split text by token limit, preferring sentence boundaries."""
+        if estimate_tokens(text) <= max_tokens:
+            return [text]
+
+        # Split by sentences first
+        import re
+        sentences = re.split(r'(?<=[。！？!?.])', text)
+        chunks = []
+        current = ""
+        current_tokens = 0
+
+        for sent in sentences:
+            sent = sent.strip()
+            if not sent:
+                continue
+            sent_tokens = estimate_tokens(sent)
+            if current_tokens + sent_tokens > max_tokens and current:
+                chunks.append(current)
+                current = sent
+                current_tokens = sent_tokens
+            else:
+                current += sent
+                current_tokens += sent_tokens
+        if current:
+            chunks.append(current)
+        return chunks
+
+    # 3. Apply token limit to each semantic chunk
+    final_chunks = []
+    for doc in lc_docs:
+        sub_chunks = split_by_tokens(doc.page_content, MAX_TOKENS)
+        for sub in sub_chunks:
+            # Find char offsets in section_text (approximate)
+            start = section_text.find(sub[:50])
+            if start == -1:
+                start = 0
+            end = start + len(sub)
+            final_chunks.append({
+                "text": sub,
+                "start_char": start,
+                "end_char": end
+            })
+
+    return final_chunks
 
 def process_file(
     file_path: Path,
@@ -454,7 +506,7 @@ def ensure_collection():
     schema.add_field("id", DataType.INT64, is_primary=True, auto_id=True)
     schema.add_field("text", DataType.VARCHAR, max_length=65535)
     schema.add_field("source_id", DataType.VARCHAR, max_length=256)
-    schema.add_field("section_title", DataType.VARCHAR, max_length=512)
+    schema.add_field("section_title", DataType.VARCHAR, max_length=2048)
     schema.add_field("section_start", DataType.INT64)
     schema.add_field("section_end", DataType.INT64)
     schema.add_field("chunk_id", DataType.INT64)
@@ -482,6 +534,12 @@ def ensure_collection():
     index_params.add_index(
         field_name="transferable_domains",
         index_type="INVERTED"
+    )
+    # JSON field index - REQUIRES json_cast_type
+    index_params.add_index(
+        field_name="logic_template",
+        index_type="INVERTED",
+        json_cast_type="STRING"  # Required for JSON fields
     )
 
     client.create_collection(

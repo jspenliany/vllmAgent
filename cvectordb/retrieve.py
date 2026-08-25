@@ -121,15 +121,22 @@ class QueryExpander:
     def __init__(self, llm: ChatOpenAI):
         self.llm = llm
         self.prompt = ChatPromptTemplate.from_template("""
-You are a query rewriter for a RAG system over 400 scattered documents.
-Rewrite the user's question into {n} diverse sub-queries that cover:
-- Different phrasings / synonyms
-- Specific entities / keywords likely in the corpus
-- Broader and narrower scope variations
+You are a query rewriting expert for a RAG system. Generate diverse sub-queries that comprehensively cover all critical dimensions of the user's question.
 
-Output ONLY as JSON: {{"sub_queries": ["q1", "q2", ...]}}
+Output ONLY JSON: {{\"sub_queries\": [\"q1\", \"q2\", ...]}}
+
+【Dimension Coverage Checklist】—— Must generate sub-queries covering at least these dimensions:
+1. Core facts / phenomena / definitions
+2. Causal mechanisms / underlying logic / core principles
+3. Historical evolution / phased changes / key milestones
+4. Positive constructions / technical accumulations / experience transfer / institutional building (NOT just criticism/reflection)
+5. Key parameters / metrics / data comparisons (where applicable)
+6. Concrete operations / implementation paths / implementation details / common pitfalls
+7. Negative lessons / risks / limitations / failure cases
+8. Cross-domain transfer / analogies / universal frameworks (where applicable)
 
 User question: {query}
+Number of sub-queries: {n}
 """)
         self.chain = self.prompt | self.llm | JsonOutputParser()
 
@@ -325,23 +332,40 @@ class AnswerGenerator:
     def __init__(self, llm: ChatOpenAI):
         self.llm = llm
         self.prompt = ChatPromptTemplate.from_template("""
-你是一个精准的回答者。根据用户问题、检索到的上下文片段、以及实例化的逻辑指南，综合生成回答。规则：
-1. 优先使用实例化逻辑指南作为核心框架
-2. 结合检索到的上下文片段补充细节
-3. 每个关键结论必须引用：[source_id] section_title (chars X-Y)
-4. 如果上下文不足，明确说："提供的文档中没有相关信息"
-4. 简洁明了；多部分回答用要点列出
-5. 不要编造上下文中没有的信息
+You are a domain expert. Based on the user's question, instantiated logic guide (if any), and retrieved context, generate a **structured, multi-dimensional, well-cited** answer.
 
-用户问题: {question}
+【Required Answer Structure】—— Must include the following modules (where applicable):
+1. **Core Conclusion / Direct Answer** (1-2 sentences)
+2. **Core Mechanism / Principle / Logic Framework** (step-by-step, structured)
+3. **Positive Constructions / Technical Accumulations / Institutional Evolution** (NOT just criticism/reflection)
+4. **Key Parameters / Metrics / Data Comparison Tables** (where quantifiable metrics are involved)
+5. **Concrete Operations / Implementation Steps / Implementation Details / Common Pitfalls**
+6. **Negative Lessons / Risks / Limitations / Boundary Conditions**
+7. **Cross-Domain Transfer / Analogies / Universal Insights** (where applicable)
+8. **Uncertainties / Controversies / Evolution Directions**
 
-实例化逻辑指南:
+【Citation Rules】:
+- Every key claim must be cited: [source_id] section_title (chars X-Y)
+- Prioritize citing the original case from the instantiated logic guide
+- If context is insufficient, explicitly state: "Insufficient information in the provided documents"
+
+【Output Format】:
+- Use Markdown heading hierarchy (## / ###)
+- Use lists, tables, bold for readability
+- Annotate: ⚠️ Must / 💡 Recommended / 📌 Key Evidence / 🔄 Transfer Condition
+
+---
+
+User Question: {question}
+
+Instantiated Logic Guide:
 {instantiated_logic}
 
-相关上下文片段:
+Relevant Context Chunks:
 {context}
 
-回答:
+---
+Generate your answer:
 """)
         self.chain = self.prompt | self.llm | StrOutputParser()
 
@@ -378,7 +402,9 @@ class RAGPipeline:
             model=LLM_MODEL,
             api_key=LLM_API_KEY,
             temperature=0.1,
-            timeout=60,
+            timeout=120,  # Increase from 60 to 120 seconds
+            max_retries=3,  # Add retries
+            request_timeout=120,  # Explicit request timeout
         )
         self.domain_detector = DomainDetector()
         self.expander = QueryExpander(self.llm)
@@ -523,7 +549,7 @@ class HybridRetriever:
 class AnswerGenerator:
     """LLM answer generation with citations."""
 
-    def __init__(self, llm: Ollama):
+    def __init__(self, llm: ChatOpenAI):
         self.llm = llm
         self.prompt = ChatPromptTemplate.from_template("""
 You are a precise answerer. Given the user's question and retrieved context chunks,

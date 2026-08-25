@@ -1,2 +1,5 @@
 2026-08-24 22:49:52,693 ERROR Failed ..<MilvusException: (code=1100, message=length of varchar field section_title exceeds max length, row number: 1, length: 1342, max length: 512: invalid parameter)>
 2026-08-24 22:38:59,102 ERROR Failed ..: HTTPConnectionPool(host='192.168.198.1', port=8070): Read timed out. (read timeout=60)
+2026-08-25 02:19:21,969 ERROR Answer generation failed: Request timed out.
+ValueError: Invalid format specifier in f-string template. Nested replacement fields are not allowed
+pymilvus.exceptions.MilvusException: <MilvusException: (code=1101, message=json index must specify cast type: missing parameter[missing_param=json_cast_type])>
