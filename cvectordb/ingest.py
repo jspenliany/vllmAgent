@@ -22,17 +22,19 @@ from pymilvus import (
 from langchain_community.document_loaders import TextLoader
 from langchain_experimental.text_splitter import SemanticChunker
 from langchain_core.documents import Document as LCDocument
-from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_core.embeddings import Embeddings
 
 # ============== CONFIG ==============
 MILVUS_HOST = "localhost"
 MILVUS_PORT = 19530
 COLLECTION_NAME = "graphrag_chunks"
 DIM = 1024
-EMBED_URL = "http://localhost:8000/v1/embeddings"  # bge-m3 service
+# bge-m3 embedding service (used for BOTH semantic chunking + vector embeddings)
+EMBED_URL = "http://192.168.198.1:8070/v1/embeddings"
+EMBED_MODEL = "bge-m3"
 BATCH_EMBED_SIZE = 32
 BATCH_INSERT_SIZE = 128
-DOCS_DIR = Path("/data/txt_corpus")  # <-- change to your 400 .txt files
+DOCS_DIR = Path("../resources/txt_corpus")  # <-- change to your 400 .txt files
 MANIFEST_PATH = Path("./ingest_manifest.json")
 LOG_LEVEL = logging.INFO
 # ====================================
@@ -51,11 +53,49 @@ class FileManifest:
     section_count: int = 0
 
 
-class BGE_M3_Embedder:
-    """Calls bge-m3 container for dense + sparse embeddings."""
+class BGE_M3_Embeddings(Embeddings):
+    """
+    LangChain-compatible embeddings wrapper for local bge-m3 service.
+    Used by SemanticChunker for boundary detection.
+    """
 
-    def __init__(self, url: str = EMBED_URL, batch_size: int = BATCH_EMBED_SIZE):
+    def __init__(self, url: str = EMBED_URL, model: str = EMBED_MODEL, batch_size: int = BATCH_EMBED_SIZE):
         self.url = url
+        self.model = model
+        self.batch_size = batch_size
+        self.session = requests.Session()
+        self.session.headers.update({"Content-Type": "application/json"})
+
+    def _embed_batch(self, texts: List[str]) -> List[List[float]]:
+        resp = self.session.post(
+            self.url,
+            json={"input": texts, "model": self.model},
+            timeout=60
+        )
+        resp.raise_for_status()
+        data = resp.json()["data"]
+        data.sort(key=lambda x: x["index"])
+        return [d["embedding"] for d in data]
+
+    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        """Embed a list of documents (for chunking boundary detection)."""
+        all_vecs = []
+        for i in range(0, len(texts), self.batch_size):
+            batch = texts[i:i + self.batch_size]
+            all_vecs.extend(self._embed_batch(batch))
+        return all_vecs
+
+    def embed_query(self, text: str) -> List[float]:
+        """Embed a single query (for chunking)."""
+        return self._embed_batch([text])[0]
+
+
+class BGE_M3_Embedder:
+    """Calls bge-m3 container for dense + sparse embeddings (for vector storage)."""
+
+    def __init__(self, url: str = EMBED_URL, model: str = EMBED_MODEL, batch_size: int = BATCH_EMBED_SIZE):
+        self.url = url
+        self.model = model
         self.batch_size = batch_size
         self.session = requests.Session()
         self.session.headers.update({"Content-Type": "application/json"})
@@ -67,7 +107,7 @@ class BGE_M3_Embedder:
             batch = texts[i:i + self.batch_size]
             resp = self.session.post(
                 self.url,
-                json={"input": batch, "model": "bge-m3"},
+                json={"input": batch, "model": self.model},
                 timeout=60
             )
             resp.raise_for_status()
@@ -181,15 +221,14 @@ def split_sections(text: str) -> List[Dict[str, Any]]:
     }]
 
 
-def semantic_chunk_section(section_text: str, embedder: BGE_M3_Embedder) -> List[Dict[str, Any]]:
+def semantic_chunk_section(section_text: str, embeddings: BGE_M3_Embeddings) -> List[Dict[str, Any]]:
     """
     Use LangChain SemanticChunker with bge-m3 embeddings.
     Returns list of chunks within the section.
     """
-    # Use a local embedding model for chunking decisions (fast, no API call)
-    # We'll use a small fast model just for boundary detection
+    # Use bge-m3 embeddings for chunking decisions (same model as vector storage)
     chunker = SemanticChunker(
-        HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2"),
+        embeddings,
         breakpoint_threshold_type="percentile",
         breakpoint_threshold_amount=70,  # 70th percentile similarity = boundary
         min_chunk_size=100,
@@ -213,6 +252,7 @@ def semantic_chunk_section(section_text: str, embedder: BGE_M3_Embedder) -> List
 def process_file(
     file_path: Path,
     embedder: BGE_M3_Embedder,
+    embeddings: BGE_M3_Embeddings,
     manifest: ManifestStore
 ) -> Optional[FileManifest]:
     """Process a single .txt file: load → section → semantic chunk → embed."""
@@ -236,8 +276,8 @@ def process_file(
 
     all_chunks = []
     for sec_idx, sec in enumerate(sections):
-        # Semantic chunk within section
-        sec_chunks = semantic_chunk_section(sec["text"], embedder)
+        # Semantic chunk within section (use embeddings for boundary detection)
+        sec_chunks = semantic_chunk_section(sec["text"], embeddings)
         for chunk_idx, chunk in enumerate(sec_chunks):
             # Global char offsets in original document
             global_start = sec["start_char"] + chunk["start_char"]
@@ -386,10 +426,11 @@ def main():
 
     # 5. Process each file (parallelize embedding-heavy step)
     embedder = BGE_M3_Embedder()
+    embeddings = BGE_M3_Embeddings()
     processed = 0
     for f in files:
         try:
-            process_file(f, embedder, manifest)
+            process_file(f, embedder, embeddings, manifest)
             processed += 1
         except Exception as e:
             log.error(f"Failed {f}: {e}")

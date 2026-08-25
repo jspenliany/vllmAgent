@@ -15,16 +15,20 @@ import requests
 from pymilvus import MilvusClient, WeightedRanker, AnnSearchRequest
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import JsonOutputParser, StrOutputParser
-from langchain_community.llms import Ollama
+from langchain_openai import ChatOpenAI
 from langchain_core.runnables import RunnablePassthrough
 
 # ============== CONFIG ==============
 MILVUS_HOST = "localhost"
 MILVUS_PORT = 19530
 COLLECTION_NAME = "graphrag_chunks"
-EMBED_URL = "http://localhost:8000/v1/embeddings"
-OLLAMA_URL = "http://localhost:11434"
-LLM_MODEL = "gemma2:27b"  # or your local model name
+# bge-m3 embedding service
+EMBED_URL = "http://192.168.198.1:8070/v1/embeddings"
+EMBED_MODEL = "bge-m3"
+# Gemma LLM (OpenAI-compatible API)
+LLM_URL = "http://192.168.198.1:8000/v1"
+LLM_MODEL = "gemma-4-31b-qat-it"
+LLM_API_KEY = "none"
 TOP_K_SUBQUERIES = 3
 TOP_K_PER_SUBQUERY = 10
 TOP_K_FINAL = 8
@@ -51,8 +55,9 @@ class RetrievedChunk:
 class BGE_M3_Embedder:
     """Calls bge-m3 for dense + sparse query embeddings."""
 
-    def __init__(self, url: str = EMBED_URL):
+    def __init__(self, url: str = EMBED_URL, model: str = EMBED_MODEL):
         self.url = url
+        self.model = model
         self.session = requests.Session()
         self.session.headers.update({"Content-Type": "application/json"})
 
@@ -61,7 +66,7 @@ class BGE_M3_Embedder:
         for text in texts:
             resp = self.session.post(
                 self.url,
-                json={"input": [text], "model": "bge-m3"},
+                json={"input": [text], "model": self.model},
                 timeout=30
             )
             resp.raise_for_status()
@@ -74,7 +79,7 @@ class BGE_M3_Embedder:
 class QueryExpander:
     """LLM-based query expansion into diverse sub-queries."""
 
-    def __init__(self, llm: Ollama):
+    def __init__(self, llm: ChatOpenAI):
         self.llm = llm
         self.prompt = ChatPromptTemplate.from_template("""
 You are a query rewriter for a RAG system over 400 scattered documents.
@@ -173,7 +178,7 @@ class HybridRetriever:
 class AnswerGenerator:
     """LLM answer generation with citations."""
 
-    def __init__(self, llm: Ollama):
+    def __init__(self, llm: ChatOpenAI):
         self.llm = llm
         self.prompt = ChatPromptTemplate.from_template("""
 You are a precise answerer. Given the user's question and retrieved context chunks,
@@ -218,7 +223,13 @@ class RAGPipeline:
 
     def __init__(self):
         self.embedder = BGE_M3_Embedder()
-        self.llm = Ollama(base_url=OLLAMA_URL, model=LLM_MODEL, temperature=0.1)
+        self.llm = ChatOpenAI(
+            base_url=LLM_URL,
+            model=LLM_MODEL,
+            api_key=LLM_API_KEY,
+            temperature=0.1,
+            timeout=60,
+        )
         self.expander = QueryExpander(self.llm)
         self.retriever = HybridRetriever(self.embedder)
         self.generator = AnswerGenerator(self.llm)
