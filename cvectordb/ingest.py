@@ -59,89 +59,89 @@ log = logging.getLogger(__name__)
 
 
 # ============== LOGIC EXTRACTION PROMPT ==============
-LOGIC_EXTRACT_PROMPT = ChatPromptTemplate.from_template("""
-You are an expert analyst skilled at extracting **reusable problem-solving frameworks** from documents across any domain (technical, business, scientific, educational, legal, medical, engineering, policy, etc.).
+LOGIC_EXTRACT_PROMPT = ChatPromptTemplate.from_template("""您是一位经验丰富的分析师，擅长从各个领域（技术、商业、科学、教育、法律、医疗、工程、政策等）的文档中提取**可复用的问题解决框架**。
 
-Extract a **logic template** - a structured, reusable problem-solving framework that can be applied to similar problems in other domains.
+提取**逻辑模板**——一种结构化的、可复用的问题解决框架，可以应用于其他领域中的类似问题。
 
-Output ONLY JSON (no extra text):
+仅输出 JSON 数据（不包含额外文本）：
+
 {{
-  "logic_template": {{
-    "name": "Concise framework name (e.g., 'Root Cause Analysis & Corrective Action Framework', 'Stakeholder Alignment & Decision Framework', 'Iterative Experimentation & Validation Framework')",
-    "description": "One-sentence summary of what this framework solves",
-    "steps": [
-      {{
-        "step": 1,
-        "phase": "Short phase name (e.g., 'Problem Definition', 'Data Collection', 'Hypothesis Formation')",
-        "key_question": "The core question this phase answers",
-        "method": "Specific techniques, tools, or approaches used",
-        "outputs": "Key deliverables or decisions produced",
-        "success_criteria": "How to know this phase is complete"
-      }},
-      {{
-        "step": 2,
-        "phase": "Short phase name (e.g., 'Root Cause Analysis', 'Solution Design', 'Experiment Design')",
-        "key_question": "The core question this phase answers",
-        "method": "Specific techniques, tools, or approaches used",
-        "outputs": "Key deliverables or decisions produced",
-        "success_criteria": "How to know this phase is complete"
-      }},
-      {{
-        "step": 3,
-        "phase": "Short phase name (e.g., 'Solution Implementation', 'Validation', 'Iteration')",
-        "key_question": "The core question this phase answers",
-        "method": "Specific techniques, tools, or approaches used",
-        "outputs": "Key deliverables or decisions produced",
-        "success_criteria": "How to know this phase is complete"
-      }},
-      {{
-        "step": 4,
-        "phase": "Short phase name (e.g., 'Verification', 'Optimization', 'Deployment')",
-        "key_question": "The core question this phase answers",
-        "method": "Specific techniques, tools, or approaches used",
-        "outputs": "Key deliverables or decisions produced",
-        "success_criteria": "How to know this phase is complete"
-      }},
-      {{
-        "step": 5,
-        "phase": "Short phase name (e.g., 'Monitoring', 'Feedback Collection', 'Continuous Improvement')",
-        "key_question": "The core question this phase answers",
-        "method": "Specific techniques, tools, or approaches used",
-        "outputs": "Key deliverables or decisions produced",
-        "success_criteria": "How to know this phase is complete"
-      }},
-      {{
-        "step": 6,
-        "phase": "Short phase name (e.g., 'Knowledge Capture', 'Documentation', 'Knowledge Transfer')",
-        "key_question": "The core question this phase answers",
-        "method": "Specific techniques, tools, or approaches used",
-        "outputs": "Key deliverables or decisions produced",
-        "success_criteria": "How to know this phase is complete"
-      }},
-      {{
-        "step": 7,
-        "phase": "Short phase name (e.g., 'Review', 'Retrospective', 'Framework Evolution')",
-        "key_question": "The core question this phase answers",
-        "method": "Specific techniques, tools, or approaches used",
-        "outputs": "Key deliverables or decisions produced",
-        "success_criteria": "How to know this phase is complete"
-      }}
-    ],
-    "guardrails": [
-      "Constraints, boundaries, or principles that must be respected",
-      "Common failure modes to avoid",
-      "Ethical/legal/safety boundaries"
-    ],
-    "applicability": {{
-      "core_domain": "Primary domain of the source document (e.g., 'software debugging', 'public health policy', 'manufacturing quality')",
-      "transferable_domains": ["domain1", "domain2", "domain3"],
-      "transfer_conditions": "Under what conditions this framework transfers (e.g., 'problems with multiple stakeholders and measurable outcomes', 'systems with feedback loops and observable metrics')"
+    "logic_template": {{
+        "name": "框架的简要名称（例如，“根本原因分析与纠正措施框架”、“利益相关者协调与决策框架”、“迭代实验与验证框架”）",
+        "description": "此框架解决的问题的一句话总结",
+        "steps": [
+            {{
+                "step": 1,
+                "phase": "阶段的简短名称（例如，“问题定义”、“数据收集”、“假设形成”）",
+                "key_question": "此阶段回答的核心问题",
+                "method": "使用的具体技术、工具或方法",
+                "outputs": "产生的关键交付成果或决策",
+                "success_criteria": "如何判断此阶段已完成"
+            }},
+            {{
+                "step": 2,
+                "phase": "阶段的简短名称（例如，“问题定义”、“数据收集”、“假设形成”） {{ “根本原因分析”、“解决方案设计”、“实验设计”）”
+                “key_question”：此阶段回答的核心问题，
+                “method”：使用的具体技术、工具或方法，
+                “outputs”：产生的关键交付成果或决策，
+                “success_criteria”：如何判断此阶段已完成”
+            }},
+            {{
+                “step”：3，
+                “phase”：阶段简称（例如，“解决方案实施”、“验证”、“迭代”），
+                “key_question”：此阶段回答的核心问题，
+                “method”：使用的具体技术、工具或方法，
+                “outputs”：产生的关键交付成果或决策，
+                “success_criteria”：如何判断此阶段已完成”
+            }},
+            {{
+                “step”：4，
+                “phase”：阶段简称（例如，“验证”、“优化”， {{ '部署')",
+                "key_question": "此阶段回答的核心问题",
+                "method": "使用的具体技术、工具或方法",
+                "outputs": "产生的关键交付成果或决策",
+                "success_criteria": "如何判断此阶段已完成"
+            }},
+            {{
+                "step": 5,
+                "phase": "阶段简称（例如，“监控”、“反馈收集”、“持续改进”）",
+                "key_question": "此阶段回答的核心问题",
+                "method": "使用的具体技术、工具或方法",
+                "outputs": "产生的关键交付成果或决策",
+                "success_criteria": "如何判断此阶段已完成"
+            }},
+            {{
+                "step": 6,
+                "phase": "阶段简称（例如，“知识获取”、“文档编制”、“知识转移”）",
+                "key_question": "本阶段解答的核心问题",
+                "method": "使用的具体技术、工具或方法",
+                "outputs": "产生的关键交付成果或决策",
+                "success_criteria": "如何判断本阶段完成"
+            }},
+            {{
+                "step": 7,
+                "phase": "阶段简称（例如，“审查”、“回顾”、“框架演进”）",
+                "key_question": "本阶段解答的核心问题",
+                "method": "使用的具体技术、工具或方法",
+                "outputs": "产生的关键交付成果或决策",
+                "success_criteria": "如何判断本阶段完成"
+            }}
+        ],
+        "guardrails": [
+            "必须遵守的约束、界限或原则",
+            "需要避免的常见失效模式",
+            "伦理/法律/安全界限"
+        ],
+        "applicability": {{
+            "core_domain": "源文档的主要领域（例如，“软件调试”、“公共卫生政策”、“制造质量”）",
+            "transferable_domains": ["domain1", "domain2", "domain3"],
+            "transfer_conditions": "此框架的适用条件（例如，“涉及多个利益相关者和可衡量结果的问题”、“具有反馈回路和可观察指标的系统”）"
+        }},
+        "key_assumptions": [
+            "框架所依赖的假设（例如，“利益相关者是理性行为者”、“数据可用”、“系统可观察”）"
+        ]
     }},
-    "key_assumptions": [
-      "Assumptions the framework relies on (e.g., 'stakeholders are rational actors', 'data is available', 'system is observable')"
-    ]
-  }},
-  "source_case_summary": "200-word summary of the source document's problem, approach, and outcome"
+    "source_case_summary": "源文档的问题、方法和结果的 200 字摘要"
 }}
 
 Document content:
@@ -328,7 +328,7 @@ def extract_logic_template_long(text: str, llm_chain, max_input=LLM_RAW_TEXT) ->
     chunk_size = int(LLM_RAW_TEXT/2)
     overlap = 200
     chunks = [text[i:i + chunk_size] for i in range(0, len(text), chunk_size - overlap)]
-
+    log.info(f"batch mode.....Chunk count: {len(chunks)}")
     summaries = []
     for chunk in chunks:
         summary_prompt = f"用 400 字总结文本的核心问题、方法、逻辑、事实、结论：\n\n{chunk}"
@@ -342,9 +342,10 @@ def extract_logic_template_long(text: str, llm_chain, max_input=LLM_RAW_TEXT) ->
 def extract_logic_template(text: str, llm_chain) -> Optional[Dict[str, Any]]:
     """Extract logic template from document text using LLM."""
     try:
+        log.info(f"enter into Extracting logic template: {text}")
         # Use first 4000 chars for logic extraction (cost control)
         truncated = text[:LLM_RAW_TEXT]
-        result = llm_chain.invoke(LOGIC_EXTRACT_PROMPT.format(doc_text=truncated))
+        result = llm_chain.invoke(truncated)
         # Handle both string (raw) and dict (parsed by JsonOutputParser)
         if isinstance(result, dict):
             logic_data = result
@@ -641,7 +642,7 @@ def upsert_chunks(chunks: List[Dict[str, Any]]):
 def ensure_collection():
     """Create Milvus collection with hybrid indexes if not exists."""
     client = MilvusClient(uri=f"http://{MILVUS_HOST}:{MILVUS_PORT}")
-    # client.drop_collection(COLLECTION_NAME)
+    client.drop_collection(COLLECTION_NAME)
 
     if client.has_collection(COLLECTION_NAME):
         log.info(f"Collection '{COLLECTION_NAME}' exists")
@@ -660,8 +661,8 @@ def ensure_collection():
     schema.add_field("sparse_vector", DataType.SPARSE_FLOAT_VECTOR)
     # Logic template fields for cross-domain analogy
     schema.add_field("logic_template", DataType.JSON)
-    schema.add_field("logic_name", DataType.VARCHAR, max_length=256)
-    schema.add_field("transferable_domains", DataType.JSON)
+    schema.add_field("logic_name", DataType.VARCHAR, max_length=512)
+    schema.add_field("transferable_domains", DataType.ARRAY,element_type=DataType.VARCHAR, max_length=256, max_capacity=32)
 
     index_params = MilvusClient.prepare_index_params()
     index_params.add_index(
@@ -683,9 +684,8 @@ def ensure_collection():
     )
     # JSON field index - REQUIRES json_cast_type
     index_params.add_index(
-        field_name="logic_template",
-        index_type="INVERTED",
-        json_cast_type="STRING"  # Required for JSON fields
+        field_name="logic_name",
+        index_type="INVERTED"
     )
 
     client.create_collection(
