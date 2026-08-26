@@ -147,7 +147,35 @@ LOGIC_EXTRACT_PROMPT = ChatPromptTemplate.from_template("""您是一位经验丰
 Document content:
 {doc_text}
 """)
+TEXT_LENTH_COMPARESS_PROMPT = ChatPromptTemplate.from_template("""你是一名顶级的专业学术编辑与逻辑重构专家。请对给定的输入文本进行【高保真深度精简与改写】。
+### 核心目标：
+在**绝对不丢失核心信息、事实数据和论证逻辑**的前提下，大幅消除冗余，将文本重构并精简至 **2000 字以内**。
 
+---
+### 严格遵循的原则：
+1. **绝对不可删减的内容（高优先级保留）：**
+   - **核心事实与结论**：所有的核心论点、因果关系、推导过程与最终结论。
+   - **硬核细节与数据**：所有具体数值、百分比、时间节点、专有名词、模型/算法/方法名称。
+   - **逻辑链条**：保留原有的因果关联、转折对比、递进层次，确保论据严密支撑论点。
+
+2. **必须大力精简/剔除的内容（主要降字数手段）：**
+   - **套话与过渡语**：删除“众所周知”、“综上所述”、“值得一提的是”、“我们可以看出”等元语言和填充词。
+   - **冗余修饰**：剔除过度的形容词、副词，将长定语改写为紧凑短句。
+   - **重复表述**：对于同一观点在多处的反复提及，提炼后仅保留一处最精准的表述。
+   - **过度发散的举例**：如果原文字例过长，请保留“案例结论/核心事实”，压缩案例的背景描写过程。
+
+3. **改写表达规范：**
+   - 采用高度紧凑、严谨的书面化语言。
+   - 可适当使用结构化排版（如编号列表、清晰的分段）来提升高密度信息的可读性。
+   - 保持客观中立，严禁主观臆造任何原文未提及的信息（零幻觉）。
+
+---
+### 待改写文本：
+{doc_text}
+---
+
+### 改写后的精简文本（请确保总字数严格控制在 2000 字以内）：
+""")
 # LLM for logic extraction (initialized in main)
 logic_extraction_chain = None
 
@@ -322,6 +350,7 @@ def extract_logic_template_long(text: str, llm_chain, max_input=LLM_RAW_TEXT) ->
     """分层提取：长文档先摘要，再从摘要提取逻辑"""
 
     if len(text) <= max_input:
+        log.info(f"single mode...direct to extract logic template: {len(text)}")
         return extract_logic_template(text, llm_chain)
 
     # Step 1: 分块摘要（并行，快）
@@ -331,12 +360,12 @@ def extract_logic_template_long(text: str, llm_chain, max_input=LLM_RAW_TEXT) ->
     log.info(f"batch mode.....Chunk count: {len(chunks)}")
     summaries = []
     for chunk in chunks:
-        summary_prompt = f"用 400 字总结文本的核心问题、方法、逻辑、事实、结论：\n\n{chunk}"
-        summary = llm_chain.invoke({"doc_text": summary_prompt})  # 复用同一 LLM
+        summary = text_compress_chain.invoke({"doc_text": chunk})  # 复用同一 LLM
         summaries.append(summary)
-
+        log.info(f"extracted logic template: {summary}")
     # Step 2: 合并摘要再提取逻辑
     combined_summary = "\n\n---\n\n".join(summaries)
+    log.info(f"batch mode.....Combined summary: {combined_summary}")
     return extract_logic_template(combined_summary, llm_chain)
 
 def extract_logic_template(text: str, llm_chain) -> Optional[Dict[str, Any]]:
@@ -699,12 +728,11 @@ def ensure_collection():
 
 def main():
     log.info("Starting ingestion pipeline")
-
+    global logic_extraction_chain, text_compress_chain
     # 1. Ensure collection exists
     ensure_collection()
 
     # 2. Initialize LLM for logic extraction
-    global logic_extraction_chain
     llm = ChatOpenAI(
         base_url=LLM_URL,
         model=LLM_MODEL,
@@ -714,6 +742,7 @@ def main():
         max_retries=2
     )
     logic_extraction_chain = LOGIC_EXTRACT_PROMPT | llm | JsonOutputParser()
+    text_compress_chain = TEXT_LENTH_COMPARESS_PROMPT | llm | JsonOutputParser()
     log.info("Logic extraction chain initialized")
 
     # 2. Load manifest
