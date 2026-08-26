@@ -73,19 +73,66 @@ Output ONLY JSON (no extra text):
         "method": "Specific techniques, tools, or approaches used",
         "outputs": "Key deliverables or decisions produced",
         "success_criteria": "How to know this phase is complete"
+      }},
+      {{
+        "step": 2,
+        "phase": "Short phase name (e.g., 'Root Cause Analysis', 'Solution Design', 'Experiment Design')",
+        "key_question": "The core question this phase answers",
+        "method": "Specific techniques, tools, or approaches used",
+        "outputs": "Key deliverables or decisions produced",
+        "success_criteria": "How to know this phase is complete"
+      }},
+      {{
+        "step": 3,
+        "phase": "Short phase name (e.g., 'Solution Implementation', 'Validation', 'Iteration')",
+        "key_question": "The core question this phase answers",
+        "method": "Specific techniques, tools, or approaches used",
+        "outputs": "Key deliverables or decisions produced",
+        "success_criteria": "How to know this phase is complete"
+      }},
+      {{
+        "step": 4,
+        "phase": "Short phase name (e.g., 'Verification', 'Optimization', 'Deployment')",
+        "key_question": "The core question this phase answers",
+        "method": "Specific techniques, tools, or approaches used",
+        "outputs": "Key deliverables or decisions produced",
+        "success_criteria": "How to know this phase is complete"
+      }},
+      {{
+        "step": 5,
+        "phase": "Short phase name (e.g., 'Monitoring', 'Feedback Collection', 'Continuous Improvement')",
+        "key_question": "The core question this phase answers",
+        "method": "Specific techniques, tools, or approaches used",
+        "outputs": "Key deliverables or decisions produced",
+        "success_criteria": "How to know this phase is complete"
+      }},
+      {{
+        "step": 6,
+        "phase": "Short phase name (e.g., 'Knowledge Capture', 'Documentation', 'Knowledge Transfer')",
+        "key_question": "The core question this phase answers",
+        "method": "Specific techniques, tools, or approaches used",
+        "outputs": "Key deliverables or decisions produced",
+        "success_criteria": "How to know this phase is complete"
+      }},
+      {{
+        "step": 7,
+        "phase": "Short phase name (e.g., 'Review', 'Retrospective', 'Framework Evolution')",
+        "key_question": "The core question this phase answers",
+        "method": "Specific techniques, tools, or approaches used",
+        "outputs": "Key deliverables or decisions produced",
+        "success_criteria": "How to know this phase is complete"
       }}
-      // ... 4-7 steps total
     ],
     "guardrails": [
       "Constraints, boundaries, or principles that must be respected",
       "Common failure modes to avoid",
       "Ethical/legal/safety boundaries"
     ],
-    "applicability": {
+    "applicability": {{
       "core_domain": "Primary domain of the source document (e.g., 'software debugging', 'public health policy', 'manufacturing quality')",
       "transferable_domains": ["domain1", "domain2", "domain3"],
       "transfer_conditions": "Under what conditions this framework transfers (e.g., 'problems with multiple stakeholders and measurable outcomes', 'systems with feedback loops and observable metrics')"
-    },
+    }},
     "key_assumptions": [
       "Assumptions the framework relies on (e.g., 'stakeholders are rational actors', 'data is available', 'system is observable')"
     ]
@@ -214,19 +261,85 @@ def all_keys(self) -> set:
         return set(self.data.keys())
 
 
+def extract_json_from_response(response: str) -> Optional[str]:
+    """Extract valid JSON from LLM response, handling markdown code blocks."""
+    import re
+    log.info(f"Extracting JSON from response: before")
+    # Try to find JSON in markdown code blocks
+    json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', response, re.DOTALL)
+    if json_match:
+        return json_match.group(1)
+    log.info(f"Extracting JSON from response: after")
+    # Try to find bare JSON object
+    json_match = re.search(r'(\{.*\})', response, re.DOTALL)
+    if json_match:
+        return json_match.group(1)
+
+    return None
+
+
+def validate_logic_template(data: Dict) -> bool:
+    """Validate logic template has required structure."""
+    try:
+        lt = data.get("logic_template")
+        if not lt or not isinstance(lt, dict):
+            return False
+
+        # Required fields
+        required = ["name", "steps", "applicability"]
+        for field in required:
+            if field not in lt:
+                return False
+
+        # Steps must be list with at least 1 step
+        steps = lt.get("steps")
+        if not isinstance(steps, list) or len(steps) == 0:
+            return False
+
+        # Each step must have required fields
+        for step in steps:
+            if not all(k in step for k in ["step", "phase", "key_question", "method"]):
+                return False
+
+        # Applicability must have transferable_domains as list
+        app = lt.get("applicability")
+        if not isinstance(app, dict):
+            return False
+        if not isinstance(app.get("transferable_domains"), list):
+            return False
+
+        return True
+    except Exception:
+        return False
+
 def extract_logic_template(text: str, llm_chain) -> Optional[Dict[str, Any]]:
     """Extract logic template from document text using LLM."""
     try:
         # Use first 4000 chars for logic extraction (cost control)
         truncated = text[:4000]
         result = llm_chain.invoke(LOGIC_EXTRACT_PROMPT.format(doc_text=truncated))
-        # Parse JSON from response
-        logic_data = json.loads(result)
+        # Handle both string (raw) and dict (parsed by JsonOutputParser)
+        if isinstance(result, dict):
+            logic_data = result
+        elif isinstance(result, str):
+            json_str = extract_json_from_response(result)
+            if not json_str:
+                log.warning("No valid JSON found in LLM response")
+                return None
+            logic_data = json.loads(json_str)
+        else:
+            log.warning(f"Unexpected result type: {type(result)}")
+            return None
+
+        # Validate required structure
+        if not validate_logic_template(logic_data):
+            log.warning("Logic template validation failed")
+            return None
+
         return logic_data
     except Exception as e:
-        log.warning(f"Logic extraction failed: {e}")
+        log.warning(f"Logic extraction failed .....****.....: {e}")
         return None
-
 
 def file_hash(path: Path) -> str:
     h = hashlib.sha256()
@@ -399,13 +512,13 @@ def process_file(
     logic_template = extract_logic_template(text, logic_chain)
     if logic_template:
         log.info(f"  → Logic template extracted: {logic_template.get('logic_template', {}).get('name', 'unnamed')}")
+    else:
+        log.warning(f"  → Logic extraction failed, proceeding without logic template")
 
     all_chunks = []
     for sec_idx, sec in enumerate(sections):
-        # Semantic chunk within section (use embeddings for boundary detection)
         sec_chunks = semantic_chunk_section(sec["text"], embeddings)
         for chunk_idx, chunk in enumerate(sec_chunks):
-            # Global char offsets in original document
             global_start = sec["start_char"] + chunk["start_char"]
             global_end = sec["start_char"] + chunk["end_char"]
             chunk_data = {
@@ -416,10 +529,11 @@ def process_file(
                 "section_end": global_end,
                 "chunk_id": chunk_idx,
                 "section_idx": sec_idx,
-                # Logic template fields (same for all chunks from this file)
+                # Logic template fields - ONLY include if extraction succeeded
                 "logic_template": logic_template,
                 "logic_name": logic_template.get("logic_template", {}).get("name") if logic_template else None,
-                "transferable_domains": logic_template.get("logic_template", {}).get("applicability", {}).get("transferable_domains", []) if logic_template else [],
+                "transferable_domains": logic_template.get("logic_template", {}).get("applicability", {}).get(
+                    "transferable_domains", []) if logic_template else [],
             }
             all_chunks.append(chunk_data)
 
@@ -461,6 +575,10 @@ def upsert_chunks(chunks: List[Dict[str, Any]]):
         return
 
     client = MilvusClient(uri=f"http://{MILVUS_HOST}:{MILVUS_PORT}")
+
+    # Ensure collection is loaded
+    client.load_collection(COLLECTION_NAME)
+
     # Delete old chunks for these source_ids
     source_ids = list(set(c["source_id"] for c in chunks))
     for sid in source_ids:

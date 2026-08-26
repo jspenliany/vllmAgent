@@ -3,3 +3,10 @@
 2026-08-25 02:19:21,969 ERROR Answer generation failed: Request timed out.
 ValueError: Invalid format specifier in f-string template. Nested replacement fields are not allowed
 pymilvus.exceptions.MilvusException: <MilvusException: (code=1101, message=json index must specify cast type: missing parameter[missing_param=json_cast_type])>
+
+2026-08-25 03:50:46,694 [ERROR][_log_rpc_error]: RPC error: [insert_rows], <MilvusException: (code=1100, message=json field 'logic_template' is illegal, array type mismatch: invalid parameter[expected=need json array][actual=got nil])>, <elapsed:1.8ms>
+
+2026-08-25 08:56:36,051 WARNING Logic extraction failed: '\n      "core_domain"'
+2026-08-25 08:56:36,051 WARNING   → Logic extraction failed, proceeding without logic template
+2026-08-25 08:56:36,894 [ERROR][_log_rpc_error]: RPC error: [insert_rows], <MilvusException: (code=1100, message=json field 'logic_template' is illegal, array type mismatch: invalid parameter[expected=need json array][actual=got nil])>, <elapsed:1.4ms>
+Traceback:
