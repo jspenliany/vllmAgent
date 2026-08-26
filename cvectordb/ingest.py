@@ -39,10 +39,14 @@ DIM = 1024
 # bge-m3 embedding service (used for BOTH semantic chunking + vector embeddings)
 EMBED_URL = "http://192.168.198.1:8070/v1/embeddings"
 EMBED_MODEL = "bge-m3"
+EMBED_TIMEOUT = 90
 # Gemma LLM (OpenAI-compatible API) for logic extraction
 LLM_URL = "http://192.168.198.1:8000/v1"
 LLM_MODEL = "gemma-4-31b-qat-it"
 LLM_API_KEY = "none"
+LLM_TIMEOUT = 120
+LLM_REQUEST_TIMEOUT = 120
+LLM_RAW_TEXT = 6000
 BATCH_EMBED_SIZE = 32
 BATCH_INSERT_SIZE = 128
 DOCS_DIR = Path("../resources/txt_corpus")  # <-- change to your 400 .txt files
@@ -177,7 +181,7 @@ class BGE_M3_Embeddings(Embeddings):
         resp = self.session.post(
             self.url,
             json={"input": texts, "model": self.model},
-            timeout=60
+            timeout=EMBED_TIMEOUT
         )
         resp.raise_for_status()
         data = resp.json()["data"]
@@ -215,7 +219,7 @@ class BGE_M3_Embedder:
             resp = self.session.post(
                 self.url,
                 json={"input": batch, "model": self.model},
-                timeout=60
+                timeout=EMBED_TIMEOUT
             )
             resp.raise_for_status()
             data = resp.json()["data"]
@@ -282,6 +286,7 @@ def validate_logic_template(data: Dict) -> bool:
     """Validate logic template has required structure."""
     try:
         lt = data.get("logic_template")
+        log.info(f"Validating logic template: {lt}")
         if not lt or not isinstance(lt, dict):
             return False
 
@@ -312,11 +317,33 @@ def validate_logic_template(data: Dict) -> bool:
     except Exception:
         return False
 
+
+def extract_logic_template_long(text: str, llm_chain, max_input=LLM_RAW_TEXT) -> Optional[Dict]:
+    """分层提取：长文档先摘要，再从摘要提取逻辑"""
+
+    if len(text) <= max_input:
+        return extract_logic_template(text, llm_chain)
+
+    # Step 1: 分块摘要（并行，快）
+    chunk_size = int(LLM_RAW_TEXT/2)
+    overlap = 200
+    chunks = [text[i:i + chunk_size] for i in range(0, len(text), chunk_size - overlap)]
+
+    summaries = []
+    for chunk in chunks:
+        summary_prompt = f"用 400 字总结文本的核心问题、方法、逻辑、事实、结论：\n\n{chunk}"
+        summary = llm_chain.invoke({"doc_text": summary_prompt})  # 复用同一 LLM
+        summaries.append(summary)
+
+    # Step 2: 合并摘要再提取逻辑
+    combined_summary = "\n\n---\n\n".join(summaries)
+    return extract_logic_template(combined_summary, llm_chain)
+
 def extract_logic_template(text: str, llm_chain) -> Optional[Dict[str, Any]]:
     """Extract logic template from document text using LLM."""
     try:
         # Use first 4000 chars for logic extraction (cost control)
-        truncated = text[:4000]
+        truncated = text[:LLM_RAW_TEXT]
         result = llm_chain.invoke(LOGIC_EXTRACT_PROMPT.format(doc_text=truncated))
         # Handle both string (raw) and dict (parsed by JsonOutputParser)
         if isinstance(result, dict):
@@ -509,7 +536,7 @@ def process_file(
     sections = split_sections(text)
 
     # Extract logic template from full document (once per file)
-    logic_template = extract_logic_template(text, logic_chain)
+    logic_template = extract_logic_template_long(text, logic_chain)
     if logic_template:
         log.info(f"  → Logic template extracted: {logic_template.get('logic_template', {}).get('name', 'unnamed')}")
     else:
@@ -614,6 +641,7 @@ def upsert_chunks(chunks: List[Dict[str, Any]]):
 def ensure_collection():
     """Create Milvus collection with hybrid indexes if not exists."""
     client = MilvusClient(uri=f"http://{MILVUS_HOST}:{MILVUS_PORT}")
+    # client.drop_collection(COLLECTION_NAME)
 
     if client.has_collection(COLLECTION_NAME):
         log.info(f"Collection '{COLLECTION_NAME}' exists")
@@ -682,7 +710,8 @@ def main():
         model=LLM_MODEL,
         api_key=LLM_API_KEY,
         temperature=0.1,
-        timeout=60,
+        timeout=LLM_TIMEOUT,
+        max_retries=2
     )
     logic_extraction_chain = LOGIC_EXTRACT_PROMPT | llm | JsonOutputParser()
     log.info("Logic extraction chain initialized")
