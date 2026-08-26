@@ -147,30 +147,23 @@ LOGIC_EXTRACT_PROMPT = ChatPromptTemplate.from_template("""您是一位经验丰
 Document content:
 {doc_text}
 """)
-TEXT_LENTH_COMPARESS_PROMPT = ChatPromptTemplate.from_template("""你是一名顶级的专业学术编辑与逻辑重构专家。请对给定的输入文本进行【高保真深度精简与改写】。
-### 核心目标：
-在**绝对不丢失核心信息、事实数据和论证逻辑**的前提下，大幅消除冗余，将文本重构并精简至 **2000 字以内**。
+TEXT_LENTH_COMPARESS_PROMPT = ChatPromptTemplate.from_template("""# 角色
+你是一个专业的高级编辑和文本精简专家，擅长在不流失任何核心信息的前提下，对文本进行极限压缩。
+
+# 任务
+请将我提供的原始文本进行精简，目标字数尽可能控制在 2000 字左右。
+
+# 核心要求（请严格遵守）
+1. **事实与细节零丢失**：务必保留原文本中的所有核心事实、关键数据、专有名词、核心观点和关键细节，绝对不能进行主观臆测或添加原文没有的信息。
+2. **逻辑完全一致**：精简后的文本必须保持与原文完全相同的论证逻辑、因果关系和叙事结构，确保上下文衔接紧密、逻辑通顺。
+3. **纯文本输出**：
+   - 输出格式必须为纯文本（Plain Text）。
+   - 请勿使用任何 Markdown 格式标记（如：不要使用 # 标题、**加粗**、列表符号 `-` 或 `*` 等）。
+   - 仅输出精简后的正文，不要包含任何前后置的客套话或解释（例如不要写“以下是为您精简后的文本：”）。
+4. **去粗取精**：通过合并同类项、删减冗余修饰词、压缩过渡句等方式进行提炼，用最凝练、精准的现代汉语表达相同的意思。
 
 ---
-### 严格遵循的原则：
-1. **绝对不可删减的内容（高优先级保留）：**
-   - **核心事实与结论**：所有的核心论点、因果关系、推导过程与最终结论。
-   - **硬核细节与数据**：所有具体数值、百分比、时间节点、专有名词、模型/算法/方法名称。
-   - **逻辑链条**：保留原有的因果关联、转折对比、递进层次，确保论据严密支撑论点。
-
-2. **必须大力精简/剔除的内容（主要降字数手段）：**
-   - **套话与过渡语**：删除“众所周知”、“综上所述”、“值得一提的是”、“我们可以看出”等元语言和填充词。
-   - **冗余修饰**：剔除过度的形容词、副词，将长定语改写为紧凑短句。
-   - **重复表述**：对于同一观点在多处的反复提及，提炼后仅保留一处最精准的表述。
-   - **过度发散的举例**：如果原文字例过长，请保留“案例结论/核心事实”，压缩案例的背景描写过程。
-
-3. **改写表达规范：**
-   - 采用高度紧凑、严谨的书面化语言。
-   - 可适当使用结构化排版（如编号列表、清晰的分段）来提升高密度信息的可读性。
-   - 保持客观中立，严禁主观臆造任何原文未提及的信息（零幻觉）。
-
----
-### 待改写文本：
+# 原始文本
 {doc_text}
 ---
 
@@ -361,7 +354,8 @@ def extract_logic_template_long(text: str, llm_chain, max_input=LLM_RAW_TEXT) ->
     summaries = []
     for chunk in chunks:
         summary = text_compress_chain.invoke({"doc_text": chunk})  # 复用同一 LLM
-        summaries.append(summary)
+        scale_text = getattr(summary, 'content', None)
+        summaries.append(scale_text)
         log.info(f"extracted logic template: {summary}")
     # Step 2: 合并摘要再提取逻辑
     combined_summary = "\n\n---\n\n".join(summaries)
@@ -742,7 +736,7 @@ def main():
         max_retries=2
     )
     logic_extraction_chain = LOGIC_EXTRACT_PROMPT | llm | JsonOutputParser()
-    text_compress_chain = TEXT_LENTH_COMPARESS_PROMPT | llm | JsonOutputParser()
+    text_compress_chain = TEXT_LENTH_COMPARESS_PROMPT | llm
     log.info("Logic extraction chain initialized")
 
     # 2. Load manifest
