@@ -37,8 +37,8 @@ LLM_URL = "http://192.168.198.1:8000/v1"
 LLM_MODEL = "gemma-4-31b-qat-it"
 LLM_API_KEY = "none"
 TOP_K_SUBQUERIES = 3
-TOP_K_PER_SUBQUERY = 10
-TOP_K_FINAL = 8
+TOP_K_PER_SUBQUERY = 20
+TOP_K_FINAL = 18
 DENSE_WEIGHT = 0.7
 SPARSE_WEIGHT = 0.3
 LOG_LEVEL = logging.INFO
@@ -265,18 +265,18 @@ class HybridRetriever:
     def search(self, query: str, top_k: int = TOP_K_PER_SUBQUERY) -> List[RetrievedChunk]:
         """Single query hybrid search."""
         dense_vec, sparse_vec = self.embedder.embed([query])
-
+        candidate_limit = max(top_k * 3, 50)  # 扩大候选池  通常设为 2~5 倍或固定 50~100）
         dense_req = AnnSearchRequest(
             data=dense_vec,
             anns_field="dense_vector",
             param={"metric_type": "COSINE", "params": {"ef": 128}},
-            limit=top_k
+            limit=candidate_limit
         )
         sparse_req = AnnSearchRequest(
             data=sparse_vec,
             anns_field="sparse_vector",
             param={"metric_type": "IP", "params": {}},
-            limit=top_k
+            limit=candidate_limit
         )
 
         results = self.client.hybrid_search(
@@ -402,9 +402,9 @@ class RAGPipeline:
             model=LLM_MODEL,
             api_key=LLM_API_KEY,
             temperature=0.1,
-            timeout=120,  # Increase from 60 to 120 seconds
+            timeout=180,  # Increase from 60 to 120 seconds
             max_retries=3,  # Add retries
-            request_timeout=120,  # Explicit request timeout
+            request_timeout=180,  # Explicit request timeout
         )
         self.domain_detector = DomainDetector()
         self.expander = QueryExpander(self.llm)
