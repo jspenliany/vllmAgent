@@ -9,15 +9,13 @@ Each document gets a "logic_template" JSON extracted by LLM,
 enabling cross-domain reasoning (e.g., neighbor dispute logic → traffic dispute).
 """
 
-import os
 import json
 import hashlib
 import logging
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass, asdict
-from concurrent.futures import ThreadPoolExecutor, as_completed
-
+import re
 import requests
 from pymilvus import (
     connections, Collection, CollectionSchema, FieldSchema, DataType,
@@ -46,7 +44,7 @@ LLM_MODEL = "gemma-4-31b-qat-it"
 LLM_API_KEY = "none"
 LLM_TIMEOUT = 120
 LLM_REQUEST_TIMEOUT = 120
-LLM_RAW_TEXT = 6000
+LLM_RAW_TEXT = 2400
 BATCH_EMBED_SIZE = 32
 BATCH_INSERT_SIZE = 128
 DOCS_DIR = Path("../resources/txt_corpus")  # <-- change to your 400 .txt files
@@ -147,7 +145,7 @@ LOGIC_EXTRACT_PROMPT = ChatPromptTemplate.from_template("""您是一位经验丰
 Document content:
 {doc_text}
 """)
-TEXT_LENGTH_COMPARESS_PROMPT = ChatPromptTemplate.from_template("""# 角色
+TEXT_LENGTH_COMPRESS_PROMPT = ChatPromptTemplate.from_template("""# 角色
 你是一个专业的高级编辑和文本精简专家，擅长在不流失任何核心信息的前提下，对文本进行极限压缩。
 
 # 任务
@@ -336,6 +334,46 @@ def validate_logic_template(data: Dict) -> bool:
         return False
 
 
+def split_by_sentences(text: str, max_size: int, overlap_sentences: int = 2) -> list[str]:
+    """
+    按句子边界切分文本，每个 chunk 不超过 max_size 字符。
+
+    Args:
+        text: 原始文本
+        max_size: 每个 chunk 的最大字符数
+        overlap_sentences: 相邻 chunk 重叠的句子数
+
+    Returns:
+        切分后的 chunk 列表
+    """
+    # 1. 按句子边界拆分
+    #    正则：中文句号。！？ + 英文 .!? + 换行
+    sentences = re.split(r'(?<=[。！？.!?])\s*', text)
+    sentences = [s.strip() for s in sentences if s.strip()]
+
+    # 2. 贪心合并句子，每个 chunk 不超过 max_size
+    chunks = []
+    current = []
+    current_size = 0
+
+    for sent in sentences:
+        sent_size = len(sent)
+        if current_size + sent_size > max_size and current:
+            # 当前 chunk 已满，保存
+            chunks.append(''.join(current))
+            # 保留最后 N 个句子作为 overlap
+            current = current[-overlap_sentences:] if len(current) > overlap_sentences else current
+            current_size = sum(len(s) for s in current)
+        current.append(sent)
+        current_size += sent_size
+
+    # 最后一个 chunk
+    if current:
+        chunks.append(''.join(current))
+
+    return chunks
+
+
 def extract_logic_template_long(text: str, llm_chain, max_input=LLM_RAW_TEXT) -> Optional[Dict]:
     """分层提取：长文档先摘要，再从摘要提取逻辑"""
 
@@ -343,20 +381,21 @@ def extract_logic_template_long(text: str, llm_chain, max_input=LLM_RAW_TEXT) ->
         log.info(f"single mode...direct to extract logic template: {len(text)}")
         return extract_logic_template(text, llm_chain)
 
-    # Step 1: 分块摘要（并行，快）
-    chunk_size = int(LLM_RAW_TEXT/2)
-    overlap = 200
-    chunks = [text[i:i + chunk_size] for i in range(0, len(text), chunk_size - overlap)]
+    # Step 1: 按句子边界分块（带 overlap）
+    chunk_size = int(LLM_RAW_TEXT / 2)
+    chunks = split_by_sentences(text, chunk_size, overlap_sentences=2)
     log.info(f"batch mode.....Chunk count: {len(chunks)}")
+
     summaries = []
-    for chunk in chunks:
-        summary = text_compress_chain.invoke({"doc_text": chunk})  # 复用同一 LLM
+    for i, chunk in enumerate(chunks):
+        log.info(f"Processing chunk {i + 1}/{len(chunks)}, size: {len(chunk)}")
+        summary = text_compress_chain.invoke({"doc_text": chunk})
         scale_text = getattr(summary, 'content', None)
         summaries.append(scale_text)
-        log.info(f"extracted logic template: {summary}")
+
     # Step 2: 合并摘要再提取逻辑
     combined_summary = "\n\n---\n\n".join(summaries)
-    log.info(f"batch mode.....Combined summary: {combined_summary}")
+    log.info(f"batch mode.....Combined summary length: {len(combined_summary)}")
     return extract_logic_template(combined_summary, llm_chain)
 
 def extract_logic_template(text: str, llm_chain) -> Optional[Dict[str, Any]]:
@@ -733,7 +772,7 @@ def main():
         max_retries=2
     )
     logic_extraction_chain = LOGIC_EXTRACT_PROMPT | llm | JsonOutputParser()
-    text_compress_chain = TEXT_LENGTH_COMPARESS_PROMPT | llm
+    text_compress_chain = TEXT_LENGTH_COMPRESS_PROMPT | llm
     log.info("Logic extraction chain initialized")
 
     # 2. Load manifest
