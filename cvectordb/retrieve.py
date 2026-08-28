@@ -38,7 +38,7 @@ LLM_MODEL = "gemma-4-31b-qat-it"
 LLM_API_KEY = "none"
 TOP_K_SUBQUERIES = 3
 TOP_K_PER_SUBQUERY = 20
-TOP_K_FINAL = 18
+TOP_K_FINAL = 8
 DENSE_WEIGHT = 0.7
 SPARSE_WEIGHT = 0.3
 LOG_LEVEL = logging.INFO
@@ -255,77 +255,6 @@ class LogicAwareRetriever:
         return unique_results
 
 
-class HybridRetriever:
-    """Milvus hybrid dense+sparse search for regular chunks."""
-
-    def __init__(self, embedder: BGE_M3_Embedder):
-        self.embedder = embedder
-        self.client = MilvusClient(uri=f"http://{MILVUS_HOST}:{MILVUS_PORT}")
-
-    def search(self, query: str, top_k: int = TOP_K_PER_SUBQUERY) -> List[RetrievedChunk]:
-        """Single query hybrid search."""
-        dense_vec, sparse_vec = self.embedder.embed([query])
-        candidate_limit = max(top_k * 3, 50)  # 扩大候选池  通常设为 2~5 倍或固定 50~100）
-        dense_req = AnnSearchRequest(
-            data=dense_vec,
-            anns_field="dense_vector",
-            param={"metric_type": "COSINE", "params": {"ef": 128}},
-            limit=candidate_limit
-        )
-        sparse_req = AnnSearchRequest(
-            data=sparse_vec,
-            anns_field="sparse_vector",
-            param={"metric_type": "IP", "params": {}},
-            limit=candidate_limit
-        )
-
-        results = self.client.hybrid_search(
-            collection_name=COLLECTION_NAME,
-            reqs=[dense_req, sparse_req],
-            ranker=WeightedRanker(DENSE_WEIGHT, SPARSE_WEIGHT),
-            limit=top_k,
-            output_fields=["text", "source_id", "section_title", "section_start", "section_end", "chunk_id", "logic_template", "logic_name", "transferable_domains"]
-        )
-
-        chunks = []
-        for hit in results[0]:
-            entity = hit["entity"]
-            chunks.append(RetrievedChunk(
-                text=entity["text"],
-                source_id=entity["source_id"],
-                section_title=entity["section_title"],
-                section_start=entity["section_start"],
-                section_end=entity["section_end"],
-                chunk_id=entity["chunk_id"],
-                score=hit["distance"] if "distance" in hit else hit.get("score", 0.0),
-                logic_template=entity.get("logic_template"),
-                logic_name=entity.get("logic_name"),
-                transferable_domains=entity.get("transferable_domains", [])
-            ))
-        return chunks
-
-    def multi_query_search(self, queries: List[str], top_k: int = TOP_K_FINAL) -> List[RetrievedChunk]:
-        """Run hybrid search for multiple queries, fuse & deduplicate."""
-        all_chunks = []
-        seen = set()
-
-        # Parallel search for all sub-queries
-        with ThreadPoolExecutor(max_workers=len(queries)) as executor:
-            futures = {executor.submit(self.search, q, TOP_K_PER_SUBQUERY): q for q in queries}
-            for future in as_completed(futures):
-                chunks = future.result()
-                for c in chunks:
-                    # Deduplicate by (source_id, chunk_id)
-                    key = (c.source_id, c.chunk_id)
-                    if key not in seen:
-                        seen.add(key)
-                        all_chunks.append(c)
-
-        # Sort by score descending, take top_k
-        all_chunks.sort(key=lambda c: c.score, reverse=True)
-        return all_chunks[:top_k]
-
-
 class AnswerGenerator:
     """LLM answer generation with citations and logic template context."""
 
@@ -448,11 +377,11 @@ class RAGPipeline:
 
         # 5. Regular chunk retrieval
         chunks = self.retriever.multi_query_search(sub_queries)
-        log.info(f"Retrieved {len(chunks)} chunks")
+        log.info(f"Retrieved {len(chunks)} chunks---before generation")
 
         # 6. Answer generation
         answer = self.generator.generate(question, chunks, instantiated_logic)
-
+        log.info(f"Retrieved {len(chunks)} chunks---after generation")
         # 7. Prepare citations
         citations = []
         for c in chunks:
@@ -507,7 +436,7 @@ class HybridRetriever:
             reqs=[dense_req, sparse_req],
             ranker=WeightedRanker(DENSE_WEIGHT, SPARSE_WEIGHT),
             limit=top_k,
-            output_fields=["text", "source_id", "section_title", "section_start", "section_end", "chunk_id"]
+            output_fields=["text", "source_id", "section_title", "section_start", "section_end", "chunk_id", "logic_template", "logic_name", "transferable_domains"]
         )
 
         chunks = []
@@ -520,7 +449,10 @@ class HybridRetriever:
                 section_start=entity["section_start"],
                 section_end=entity["section_end"],
                 chunk_id=entity["chunk_id"],
-                score=hit["distance"] if "distance" in hit else hit.get("score", 0.0)
+                score=hit["distance"] if "distance" in hit else hit.get("score", 0.0),
+                logic_template=entity.get("logic_template"),
+                logic_name=entity.get("logic_name"),
+                transferable_domains=entity.get("transferable_domains", [])
             ))
         return chunks
 
@@ -535,6 +467,7 @@ class HybridRetriever:
             for future in as_completed(futures):
                 chunks = future.result()
                 for c in chunks:
+                    log.info(f"Processing chunk {c.chunk_id} chunk text: {c.text}")
                     # Deduplicate by (source_id, chunk_id)
                     key = (c.source_id, c.chunk_id)
                     if key not in seen:
@@ -545,98 +478,6 @@ class HybridRetriever:
         all_chunks.sort(key=lambda c: c.score, reverse=True)
         return all_chunks[:top_k]
 
-
-class AnswerGenerator:
-    """LLM answer generation with citations."""
-
-    def __init__(self, llm: ChatOpenAI):
-        self.llm = llm
-        self.prompt = ChatPromptTemplate.from_template("""
-You are a precise answerer. Given the user's question and retrieved context chunks,
-synthesize a concise answer. Rules:
-1. Only use information from the provided context
-2. Cite every claim using the format: [source_id] section_title (chars X-Y)
-   where source_id, section_title, and char range are provided for each chunk
-3. If context is insufficient, say "Insufficient information in the provided documents"
-4. Be concise; prefer bullet points for multi-part answers
-5. Do not add information not in the context
-
-Question: {question}
-
-Context chunks:
-{context}
-
-Answer:
-""")
-        self.chain = self.prompt | self.llm | StrOutputParser()
-
-    def _format_context(self, chunks: List[RetrievedChunk]) -> str:
-        lines = []
-        for i, c in enumerate(chunks):
-            cite = f"[{c.source_id}] {c.section_title} (chars {c.section_start}-{c.section_end})"
-            lines.append(f"--- Chunk {i+1} {cite} ---\n{c.text}\n")
-        return "\n".join(lines)
-
-    def generate(self, question: str, chunks: List[RetrievedChunk]) -> str:
-        if not chunks:
-            return "Insufficient information in the provided documents."
-
-        context = self._format_context(chunks)
-        try:
-            return self.chain.invoke({"question": question, "context": context})
-        except Exception as e:
-            log.error(f"Answer generation failed: {e}")
-            return f"Error generating answer: {e}"
-
-
-class RAGPipeline:
-    """Full RAG pipeline: expand → retrieve → generate."""
-
-    def __init__(self):
-        self.embedder = BGE_M3_Embedder()
-        self.llm = ChatOpenAI(
-            base_url=LLM_URL,
-            model=LLM_MODEL,
-            api_key=LLM_API_KEY,
-            temperature=0.1,
-            timeout=60,
-        )
-        self.expander = QueryExpander(self.llm)
-        self.retriever = HybridRetriever(self.embedder)
-        self.generator = AnswerGenerator(self.llm)
-
-    def query(self, question: str) -> Dict[str, Any]:
-        log.info(f"Query: {question}")
-
-        # 1. Query expansion
-        sub_queries = self.expander.expand(question)
-        log.info(f"Sub-queries: {sub_queries}")
-
-        # 2. Hybrid search
-        chunks = self.retriever.multi_query_search(sub_queries)
-        log.info(f"Retrieved {len(chunks)} chunks")
-
-        # 3. Answer generation
-        answer = self.generator.generate(question, chunks)
-
-        # 4. Prepare citations for frontend
-        citations = []
-        for c in chunks:
-            citations.append({
-                "source_id": c.source_id,
-                "section_title": c.section_title,
-                "char_range": f"{c.section_start}-{c.section_end}",
-                "text_preview": c.text[:200] + "..." if len(c.text) > 200 else c.text,
-                "score": round(c.score, 4)
-            })
-
-        return {
-            "question": question,
-            "answer": answer,
-            "citations": citations,
-            "sub_queries": sub_queries,
-            "chunk_count": len(chunks)
-        }
 
 
 def main():
