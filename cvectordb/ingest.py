@@ -81,22 +81,22 @@ LOGIC_EXTRACT_PROMPT = ChatPromptTemplate.from_template("""您是一位经验丰
             {{
                 "step": 2,
                 "phase": "阶段的简短名称（例如，“问题定义”、“数据收集”、“假设形成”） {{ “根本原因分析”、“解决方案设计”、“实验设计”）”
-                “key_question”：此阶段回答的核心问题，
-                “method”：使用的具体技术、工具或方法，
-                “outputs”：产生的关键交付成果或决策，
-                “success_criteria”：如何判断此阶段已完成”
+                "key_question"：此阶段回答的核心问题，
+                "method"：使用的具体技术、工具或方法，
+                "outputs"：产生的关键交付成果或决策，
+                "success_criteria"：如何判断此阶段已完成”
             }},
             {{
-                “step”：3，
-                “phase”：阶段简称（例如，“解决方案实施”、“验证”、“迭代”），
-                “key_question”：此阶段回答的核心问题，
-                “method”：使用的具体技术、工具或方法，
-                “outputs”：产生的关键交付成果或决策，
-                “success_criteria”：如何判断此阶段已完成”
+                "step"：3，
+                "phase"：阶段简称（例如，“解决方案实施”、“验证”、“迭代”），
+                "key_question"：此阶段回答的核心问题，
+                "method"：使用的具体技术、工具或方法，
+                "outputs"：产生的关键交付成果或决策，
+                "success_criteria"：如何判断此阶段已完成”
             }},
             {{
-                “step”：4，
-                “phase”：阶段简称（例如，“验证”、“优化”， {{ '部署')",
+                "step"：4，
+                "phase"：阶段简称（例如，“验证”、“优化”， {{ '部署')",
                 "key_question": "此阶段回答的核心问题",
                 "method": "使用的具体技术、工具或方法",
                 "outputs": "产生的关键交付成果或决策",
@@ -147,7 +147,7 @@ LOGIC_EXTRACT_PROMPT = ChatPromptTemplate.from_template("""您是一位经验丰
 Document content:
 {doc_text}
 """)
-TEXT_LENTH_COMPARESS_PROMPT = ChatPromptTemplate.from_template("""# 角色
+TEXT_LENGTH_COMPARESS_PROMPT = ChatPromptTemplate.from_template("""# 角色
 你是一个专业的高级编辑和文本精简专家，擅长在不流失任何核心信息的前提下，对文本进行极限压缩。
 
 # 任务
@@ -281,9 +281,6 @@ class ManifestStore:
     def all_keys(self) -> set:
         return set(self.data.keys())
 
-
-def all_keys(self) -> set:
-        return set(self.data.keys())
 
 
 def extract_json_from_response(response: str) -> Optional[str]:
@@ -736,7 +733,7 @@ def main():
         max_retries=2
     )
     logic_extraction_chain = LOGIC_EXTRACT_PROMPT | llm | JsonOutputParser()
-    text_compress_chain = TEXT_LENTH_COMPARESS_PROMPT | llm
+    text_compress_chain = TEXT_LENGTH_COMPARESS_PROMPT | llm
     log.info("Logic extraction chain initialized")
 
     # 2. Load manifest
