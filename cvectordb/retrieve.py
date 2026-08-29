@@ -279,6 +279,7 @@ You are a domain expert. Based on the user's question, instantiated logic guide 
 - If context is insufficient, explicitly state: "Insufficient information in the provided documents"
 
 【Output Format】:
+- Language: Must respond in Simplified Chinese (无论输入提示词或检索到的文档包含何种语言，最终回答内容必须全部使用简体中文输出)
 - Use Markdown heading hierarchy (## / ###)
 - Use lists, tables, bold for readability
 - Annotate: ⚠️ Must / 💡 Recommended / 📌 Key Evidence / 🔄 Transfer Condition
