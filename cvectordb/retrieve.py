@@ -459,23 +459,25 @@ class HybridRetriever:
     def multi_query_search(self, queries: List[str], top_k: int = TOP_K_FINAL) -> List[RetrievedChunk]:
         """Run hybrid search for multiple queries, fuse & deduplicate."""
         all_chunks = []
-        seen = set()
 
-        # Parallel search for all sub-queries
+        # 推荐做法：记录最高分 或 频次加权
+        chunk_map = {}  # key -> (chunk, count/max_score)
+
         with ThreadPoolExecutor(max_workers=len(queries)) as executor:
             futures = {executor.submit(self.search, q, TOP_K_PER_SUBQUERY): q for q in queries}
             for future in as_completed(futures):
                 chunks = future.result()
                 for c in chunks:
-                    log.info(f"Processing chunk {c.chunk_id} chunk text: {c.text}")
-                    # Deduplicate by (source_id, chunk_id)
                     key = (c.source_id, c.chunk_id)
-                    if key not in seen:
-                        seen.add(key)
-                        all_chunks.append(c)
+                    if key not in chunk_map:
+                        chunk_map[key] = c
+                    else:
+                        # 如果同一个 chunk 被多个子查询命中，可以保留最高分，或者适当加权提升它的排名
+                        chunk_map[key].score = max(chunk_map[key].score, c.score)
 
-        # Sort by score descending, take top_k
-        all_chunks.sort(key=lambda c: c.score, reverse=True)
+        all_chunks = list(chunk_map.values())
+        # 可以按分数重新倒序排列
+        all_chunks.sort(key=lambda x: x.score, reverse=True)
         return all_chunks[:top_k]
 
 
