@@ -247,6 +247,12 @@ class BGE_M3_Embedder:
             sparse_all.extend([d.get("sparse_embedding", {}) for d in data])
         return dense_all, sparse_all
 
+@dataclass
+class FailedFile:
+    path: str
+    error_type: str      # "hash" | "chunk" | "embed" | "llm" | "milvus" | "unknown"
+    error_msg: str
+    timestamp: str
 
 class ManifestStore:
     """Simple JSON manifest for incremental ingestion."""
@@ -756,7 +762,27 @@ def ensure_collection():
     log.info(f"Created collection '{COLLECTION_NAME}' with hybrid indexes + logic template fields")
 
 
+def save_failed_report(failed_files: List[FailedFile], output_dir: Path = Path(".")):
+    """保存失败文件报告到 JSON 文件"""
+    from datetime import datetime
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    report_path = output_dir / f"ingest_failed_{timestamp}.json"
+
+    report = {
+        "timestamp": timestamp,
+        "total_failed": len(failed_files),
+        "failed_files": [asdict(f) for f in failed_files]
+    }
+
+    with open(report_path, "w", encoding="utf-8") as f:
+        json.dump(report, f, indent=2, ensure_ascii=False)
+
+    log.info(f"Failed report saved to: {report_path}")
+    return report_path
+
 def main():
+    failed_files: List[FailedFile] = []
     log.info("Starting ingestion pipeline")
     global logic_extraction_chain, text_compress_chain
     # 1. Ensure collection exists
@@ -802,11 +828,26 @@ def main():
             process_file(f, embedder, embeddings, manifest, logic_extraction_chain)
             processed += 1
         except Exception as e:
+            failed_files.append(FailedFile(...))
             log.error(f"Failed {f}: {e}")
 
     # 5. Save manifest
     manifest.save()
     log.info(f"Done. Processed {processed}/{len(files)} files. Manifest saved.")
+    # 汇总报告
+    if failed_files:
+        print("\n" + "=" * 60)
+        print(f"⚠️  处理完成，但有 {len(failed_files)} 个文件失败：")
+        print("=" * 60)
+        for i, ff in enumerate(failed_files, 1):
+            print(f"  {i}. [{ff.error_type}] {ff.path}")
+            print(f"     错误: {ff.error_msg}")
+        print("=" * 60)
+
+        # 保存失败记录到文件
+        save_failed_report(failed_files)
+    else:
+        print("\n✅ 全部处理成功！")
 
 
 if __name__ == "__main__":
