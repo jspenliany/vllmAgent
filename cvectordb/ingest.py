@@ -258,14 +258,14 @@ class ManifestStore:
 
     def load(self):
         if self.path.exists():
-            with open(self.path) as f:
+            with open(self.path, encoding="utf-8") as f:
                 raw = json.load(f)
             self.data = {k: FileManifest(**v) for k, v in raw.items()}
             log.info(f"Loaded manifest: {len(self.data)} files")
 
     def save(self):
-        with open(self.path, "w") as f:
-            json.dump({k: asdict(v) for k, v in self.data.items()}, f, indent=2)
+        with open(self.path, "w", encoding="utf-8") as f:
+            json.dump({k: asdict(v) for k, v in self.data.items()}, f, indent=2, ensure_ascii=False)
 
     def get(self, key: str) -> Optional[FileManifest]:
         return self.data.get(key)
