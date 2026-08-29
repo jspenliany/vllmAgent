@@ -609,6 +609,7 @@ def process_file(
         log.warning(f"  → Logic extraction failed, proceeding without logic template")
 
     all_chunks = []
+    global_chunk_idx = 0  # ← 新增：全局 chunk 计数器
     for sec_idx, sec in enumerate(sections):
         sec_chunks = semantic_chunk_section(sec["text"], embeddings)
         for chunk_idx, chunk in enumerate(sec_chunks):
@@ -620,7 +621,7 @@ def process_file(
                 "section_title": sec["title"],
                 "section_start": global_start,
                 "section_end": global_end,
-                "chunk_id": chunk_idx,
+                "chunk_id": global_chunk_idx,  # ← 使用全局计数器
                 "section_idx": sec_idx,
                 # Logic template fields - ONLY include if extraction succeeded
                 "logic_template": logic_template,
@@ -628,6 +629,7 @@ def process_file(
                 "transferable_domains": logic_template.get("logic_template", {}).get("applicability", {}).get(
                     "transferable_domains", []) if logic_template else [],
             }
+            global_chunk_idx += 1
             all_chunks.append(chunk_data)
 
     if not all_chunks:

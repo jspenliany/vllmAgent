@@ -468,7 +468,10 @@ class HybridRetriever:
             futures = {executor.submit(self.search, q, TOP_K_PER_SUBQUERY): q for q in queries}
             for future in as_completed(futures):
                 chunks = future.result()
+                q = futures[future]
+                log.info(f"Sub-query '{q[:40]}...' returned {len(chunks)} chunks")  # 添加
                 for c in chunks:
+                    log.info(f"  chunk {c.chunk_id}: score={c.score:.4f} {c.source_id[:30]}")  # 添加
                     key = (c.source_id, c.chunk_id)
                     if key not in chunk_map:
                         chunk_map[key] = c
