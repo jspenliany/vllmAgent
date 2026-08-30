@@ -32,6 +32,11 @@ COLLECTION_NAME = "graphrag_chunks_v2"
 # bge-m3 embedding service
 EMBED_URL = "http://192.168.198.1:8070/v1/embeddings"
 EMBED_MODEL = "bge-m3"
+# BGE-Reranker service
+RERANK_ENABLED = True
+RERANK_URL = "http://192.168.198.1:8071/rerank"
+RERANK_MODEL = "bge-reranker-v2-m3"
+RERANK_CANDIDATE_MULTIPLIER = 1  # 粗筛数量 = TOP_K_PER_SUBQUERY * 3
 # Gemma LLM (OpenAI-compatible API)
 LLM_URL = "http://192.168.198.1:8000/v1"
 LLM_MODEL = "gemma-4-31b-qat-it"
@@ -77,7 +82,7 @@ class BGE_M3_Embedder:
             resp = self.session.post(
                 self.url,
                 json={"input": [text], "model": self.model},
-                timeout=30
+                timeout=60
             )
             resp.raise_for_status()
             data = resp.json()["data"][0]
@@ -85,6 +90,44 @@ class BGE_M3_Embedder:
             sparse_all.append(data.get("sparse_embedding", {}))
         return dense_all, sparse_all
 
+class Reranker:
+    """BGE-Reranker for precision re-ranking."""
+
+    def __init__(self, url: str = RERANK_URL, model: str = RERANK_MODEL):
+        self.url = url
+        self.model = model
+        self.session = requests.Session()
+        self.session.headers.update({"Content-Type": "application/json"})
+
+    def rerank(self, query: str, chunks: List[RetrievedChunk], top_k: int) -> List[RetrievedChunk]:
+        """Re-rank chunks using BGE-Reranker."""
+        if not chunks or not RERANK_ENABLED:
+            return chunks[:top_k]
+        log.info(f"Re-ranking {len(chunks)} chunks")
+        # Prepare documents for reranker
+        documents = [c.text for c in chunks]
+
+        # Call rerank API
+        resp = self.session.post(
+            self.url,
+            json={
+                "query": query,
+                "texts": documents,
+                "model": self.model
+            },
+            timeout=180
+        )
+        resp.raise_for_status()
+
+        # Update scores
+        results = resp.json()
+        for item in results:
+            idx = item["index"]
+            chunks[idx].score = item["score"]
+
+        # Sort by new score
+        chunks.sort(key=lambda x: x.score, reverse=True)
+        return chunks[:top_k]
 
 class DomainDetector:
     """Detect target domain from user query."""
@@ -414,8 +457,9 @@ class HybridRetriever:
     def __init__(self, embedder: BGE_M3_Embedder):
         self.embedder = embedder
         self.client = MilvusClient(uri=f"http://{MILVUS_HOST}:{MILVUS_PORT}")
+        self.reranker = Reranker()  # 新增
 
-    def search(self, query: str, top_k: int = TOP_K_PER_SUBQUERY) -> List[RetrievedChunk]:
+    def search_without_reranker(self, query: str, top_k: int = TOP_K_PER_SUBQUERY) -> List[RetrievedChunk]:
         """Single query hybrid search."""
         dense_vec, sparse_vec = self.embedder.embed([query])
 
@@ -457,6 +501,52 @@ class HybridRetriever:
             ))
         return chunks
 
+    def search_with_reranker(self, query: str, top_k: int = TOP_K_PER_SUBQUERY) -> List[RetrievedChunk]:
+        """Single query hybrid search."""
+        dense_vec, sparse_vec = self.embedder.embed([query])
+        candidate_limit = top_k * RERANK_CANDIDATE_MULTIPLIER if RERANK_ENABLED else top_k
+        dense_req = AnnSearchRequest(
+            data=dense_vec,
+            anns_field="dense_vector",
+            param={"metric_type": "COSINE", "params": {"ef": 128}},
+            limit=candidate_limit
+        )
+        sparse_req = AnnSearchRequest(
+            data=sparse_vec,
+            anns_field="sparse_vector",
+            param={"metric_type": "IP", "params": {}},
+            limit=candidate_limit
+        )
+
+        results = self.client.hybrid_search(
+            collection_name=COLLECTION_NAME,
+            reqs=[dense_req, sparse_req],
+            ranker=WeightedRanker(DENSE_WEIGHT, SPARSE_WEIGHT),
+            limit=candidate_limit,
+            output_fields=["text", "source_id", "section_title", "section_start", "section_end", "chunk_id", "logic_template", "logic_name", "transferable_domains"]
+        )
+
+        chunks = []
+        for hit in results[0]:
+            entity = hit["entity"]
+            chunks.append(RetrievedChunk(
+                text=entity["text"],
+                source_id=entity["source_id"],
+                section_title=entity["section_title"],
+                section_start=entity["section_start"],
+                section_end=entity["section_end"],
+                chunk_id=entity["chunk_id"],
+                score=hit["distance"] if "distance" in hit else hit.get("score", 0.0),
+                logic_template=entity.get("logic_template"),
+                logic_name=entity.get("logic_name"),
+                transferable_domains=entity.get("transferable_domains", [])
+            ))
+
+        # Step 2: Precision reranking
+        if RERANK_ENABLED and chunks:
+            chunks = self.reranker.rerank(query, chunks, top_k)
+        return chunks
+
     def multi_query_search(self, queries: List[str], top_k: int = TOP_K_FINAL) -> List[RetrievedChunk]:
         """Run hybrid search for multiple queries, fuse & deduplicate."""
         all_chunks = []
@@ -465,7 +555,7 @@ class HybridRetriever:
         chunk_map = {}  # key -> (chunk, count/max_score)
 
         with ThreadPoolExecutor(max_workers=len(queries)) as executor:
-            futures = {executor.submit(self.search, q, TOP_K_PER_SUBQUERY): q for q in queries}
+            futures = {executor.submit(self.search_with_reranker, q, TOP_K_PER_SUBQUERY): q for q in queries}
             for future in as_completed(futures):
                 chunks = future.result()
                 q = futures[future]
