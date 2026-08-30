@@ -28,7 +28,7 @@ from langchain_core.runnables import RunnablePassthrough
 # ============== CONFIG ==============
 MILVUS_HOST = "localhost"
 MILVUS_PORT = 19530
-COLLECTION_NAME = "graphrag_chunks"
+COLLECTION_NAME = "graphrag_chunks_v2"
 # bge-m3 embedding service
 EMBED_URL = "http://192.168.198.1:8070/v1/embeddings"
 EMBED_MODEL = "bge-m3"
@@ -38,7 +38,7 @@ LLM_MODEL = "gemma-4-31b-qat-it"
 LLM_API_KEY = "none"
 TOP_K_SUBQUERIES = 3
 TOP_K_PER_SUBQUERY = 20
-TOP_K_FINAL = 8
+TOP_K_FINAL = 16
 DENSE_WEIGHT = 0.7
 SPARSE_WEIGHT = 0.3
 LOG_LEVEL = logging.INFO

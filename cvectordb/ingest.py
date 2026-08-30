@@ -32,7 +32,7 @@ from langchain_core.output_parsers import JsonOutputParser
 # ============== CONFIG ==============
 MILVUS_HOST = "localhost"
 MILVUS_PORT = 19530
-COLLECTION_NAME = "graphrag_chunks"
+COLLECTION_NAME = "graphrag_chunks_v2"
 DIM = 1024
 # bge-m3 embedding service (used for BOTH semantic chunking + vector embeddings)
 EMBED_URL = "http://192.168.198.1:8070/v1/embeddings"
@@ -709,7 +709,7 @@ def upsert_chunks(chunks: List[Dict[str, Any]]):
 def ensure_collection():
     """Create Milvus collection with hybrid indexes if not exists."""
     client = MilvusClient(uri=f"http://{MILVUS_HOST}:{MILVUS_PORT}")
-    client.drop_collection(COLLECTION_NAME)
+    # client.drop_collection(COLLECTION_NAME)
 
     if client.has_collection(COLLECTION_NAME):
         log.info(f"Collection '{COLLECTION_NAME}' exists")
@@ -830,7 +830,7 @@ def main():
             process_file(f, embedder, embeddings, manifest, logic_extraction_chain)
             processed += 1
         except Exception as e:
-            failed_files.append(FailedFile(...))
+            failed_files.append(FailedFile(path=str(f), error_type="invalid_json_output", error_msg=str(e),timestamp="26-08-29 16:30"))
             log.error(f"Failed {f}: {e}")
 
     # 5. Save manifest
