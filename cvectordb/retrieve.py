@@ -423,6 +423,14 @@ class RAGPipeline:
         chunks = self.retriever.multi_query_search(sub_queries)
         log.info(f"Retrieved {len(chunks)} chunks---before generation")
 
+        for idx, chunk in enumerate(chunks):
+            if idx == 0:
+                log.info(f"Chunk {idx}: {chunk.text}")
+            if idx == 1:
+                log.info(f"Chunk {idx}: {chunk.text}")
+            if idx == 2:
+                log.info(f"Chunk {idx}: {chunk.text}")
+
         # 6. Answer generation
         answer = self.generator.generate(question, chunks, instantiated_logic)
         log.info(f"Retrieved {len(chunks)} chunks---after generation")
@@ -529,6 +537,11 @@ class HybridRetriever:
         chunks = []
         for hit in results[0]:
             entity = hit["entity"]
+            chunk_score = hit["distance"] if "distance" in hit else hit.get("score", 0.0)
+            if chunk_score < 0.4:
+                continue
+            chunk_title = entity["section_title"]
+            log.info(f"hit {chunk_title}  chunk_score: {chunk_score}")
             chunks.append(RetrievedChunk(
                 text=entity["text"],
                 source_id=entity["source_id"],
@@ -536,7 +549,7 @@ class HybridRetriever:
                 section_start=entity["section_start"],
                 section_end=entity["section_end"],
                 chunk_id=entity["chunk_id"],
-                score=hit["distance"] if "distance" in hit else hit.get("score", 0.0),
+                score=chunk_score,
                 logic_template=entity.get("logic_template"),
                 logic_name=entity.get("logic_name"),
                 transferable_domains=entity.get("transferable_domains", [])
@@ -545,7 +558,12 @@ class HybridRetriever:
         # Step 2: Precision reranking
         if RERANK_ENABLED and chunks:
             chunks = self.reranker.rerank(query, chunks, top_k)
-        return chunks
+
+        reranked_chunks = []
+        for chunk in chunks:
+            if chunk.score > 0.4:
+                reranked_chunks.append(chunk)
+        return reranked_chunks
 
     def multi_query_search(self, queries: List[str], top_k: int = TOP_K_FINAL) -> List[RetrievedChunk]:
         """Run hybrid search for multiple queries, fuse & deduplicate."""
