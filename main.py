@@ -8,7 +8,7 @@ from cstate.PersonState import PersonState
 from cnodes.ExtractDetail import extract_memory_node
 from cnodes.RetrieveDetail import retrieve_memory_node
 from cnodes.IntentGenerate import response_node
-from cnodes.Intent import intent_node
+from cnodes.Intent import intent_node, intent_node_with_intent
 from cnodes.Emotion import emotion_node
 from ctools.tool_def import tools
 from logger.log_def import setup_singleton_logger
@@ -56,7 +56,7 @@ def run_digital_person(name):
     workflow.add_node("listener", extract_memory_node)
     workflow.add_node("tools", tool_node)
     workflow.add_node("reflector", retrieve_memory_node)
-    workflow.add_node("intent_classifier", intent_node)
+    workflow.add_node("intent_classifier", intent_node_with_intent)
     workflow.add_node("emotion_tracker", emotion_node)
     workflow.add_node("speaker", response_node)
     log.debug("all nodes loaded.............")

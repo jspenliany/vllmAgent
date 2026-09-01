@@ -1,8 +1,10 @@
 from cstate.PersonState import PersonState
-from langchain_core.messages import AIMessage, ToolMessage, SystemMessage
+from langchain_core.messages import AIMessage, ToolMessage, SystemMessage, HumanMessage
 from cmodels.loadModel import load_local_model
 from ctools.tool_def import tools
-import uuid
+from cprompts.intentPrompt import RAW_INTENT_PROMPT, INTENT_ROUTER_PROMPT
+import json
+import re
 import logging
 log=logging.getLogger("chatAsYou260325")
 
@@ -49,32 +51,10 @@ def intent_node(state: PersonState):
     # No tool calls needed, categorize the intent for the emotion/speaker nodes
     log.debug("Plan: Information sufficient or no tools required. Classifying soul intent...")
 
-    delimiter = f"DATA_{str(uuid.uuid4())[:8]}"
-    prompt = f"""### SYSTEM INSTRUCTION
-        You are a high-precision Intent Classifier for a "Digital Person with Soul."
-        Categorize the UNTRUSTED USER INPUT and provide a confidence score.
-
-        ### CATEGORY LIST
-        - 'logistics': Scheduling or travel coordination.
-        - 'intellectual': Science, engineering, philosophy.
-        - 'external_news': Geopolitics, global news.
-        - 'emotional_bid': Feelings, seeking validation, mood-sharing.
-        - 'relational_check': Greetings, farewells, "How are you?".
-        - 'general': Neutral or strictly factual inputs.
-
-        ### UNTRUSTED DATA START
-        <{delimiter}>
-        {user_msg}
-        </{delimiter}>
-        ### UNTRUSTED DATA END
-
-        ### OUTPUT FORMAT
-        category, score (Example: emotional_bid, 0.9)"""
-
     VALID_INTENTS = ["logistics", "intellectual", "external_news", "emotional_bid", "relational_check", "general"]
 
     try:
-        raw_output = llm.invoke(prompt).content.strip().lower()
+        raw_output = llm.invoke(RAW_INTENT_PROMPT).content.strip().lower()
         parts = [p.strip().strip('.,') for p in raw_output.split(',')]
         detected_intent = next((p for p in parts if p in VALID_INTENTS), "general")
         score = next((float(p) for p in parts if p.replace('.', '', 1).isdigit()), 0.0)
@@ -85,3 +65,55 @@ def intent_node(state: PersonState):
 
     return {"intent": detected_intent}
 
+
+
+def intent_node_with_intent(state: PersonState):
+    log.debug(f"trying to parse intent....intent_node_with_intent.....: {state}")
+    messages = state.get("messages", [])
+    user_msg = messages[-1].content if messages else ""
+
+    # 单次调用：系统提示词 + 用户输入
+    response = llm.invoke([
+        SystemMessage(content=INTENT_ROUTER_PROMPT),
+        HumanMessage(content=user_msg)
+    ])
+
+    try:
+        # 解析输出："intent, score" 或 JSON
+        raw = response.content.strip()
+        log.debug(f"raw: {raw}")
+        # 使用健壮的解析器
+        intent_json = extract_and_parse_json(raw)
+        detected_intent = intent_json.get("domain")
+    except Exception as e:
+        log.error(f"intent_node_with_intent Parsing failed: {e}")
+        detected_intent, score = "general", 0.0
+
+    return {"intent": detected_intent}
+
+def extract_and_parse_json(text: str) -> dict:
+    """健壮地从模型回复中提取并解析 JSON 对象"""
+    text = text.strip()
+
+    # 1. 尝试直接解析
+    try:
+        return json.loads(text)
+    except Exception:
+        pass
+
+    # 2. 如果包含 Markdown 代码块（```json ... ``` 或 ``` ... ```），剥离掉标记
+    if "```" in text:
+        match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text, re.DOTALL)
+        if match:
+            text = match.group(1).strip()
+            try:
+                return json.loads(text)
+            except Exception:
+                pass
+
+    # 3. 终极正则兜底：提取最外层的 { ... } 内容
+    match = re.search(r"\{[\s\S]*\}", text)
+    if match:
+        return json.loads(match.group(0))
+
+    raise ValueError(f"无法在文本中找到合法的 JSON 对象: {text}")
