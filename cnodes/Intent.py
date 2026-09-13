@@ -5,8 +5,8 @@ from ctools.tool_def import tools
 from cprompts.intentPrompt import RAW_INTENT_PROMPT, INTENT_ROUTER_PROMPT
 import json
 import re
-import logging
-log=logging.getLogger("chatAsYou260325")
+from logger.log_def import setup_singleton_logger
+log=setup_singleton_logger()
 
 llm = load_local_model()
 llm_with_tools = llm.bind_tools(tools)
